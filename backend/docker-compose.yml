@@ -1,0 +1,20 @@
+services:
+  r-execution:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      R_EXECUTION_TIMEOUT_SECONDS: "20"
+      R_MAX_CODE_LENGTH: "20000"
+    # Defense-in-depth for an inherently risky service (arbitrary code execution).
+    # None of this replaces real sandboxing before exposing the service publicly
+    # -- see README.md.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0

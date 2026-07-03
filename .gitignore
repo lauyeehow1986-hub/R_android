@@ -1,0 +1,22 @@
+## Gradle / Android
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+## Gradle wrapper distributions cached locally (jar is committed, the rest isn't)
+!gradle/wrapper/gradle-wrapper.jar
+
+## OS / editor cruft
+.DS_Store
+Thumbs.db
+
+## Backend
+backend/*.log
