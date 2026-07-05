@@ -120,9 +120,11 @@ local_server <- function(env = list(), .local_envir = parent.frame()) {
   child_env["R_SESSION_DIR"] <- session_dir
   for (nm in names(env)) child_env[nm] <- as.character(env[[nm]])
 
+  # `test_dir` runs test files with CWD = backend/tests, so ".." is backend/
+  # (where run.R lives), regardless of where run-tests.R was invoked from.
   proc <- processx::process$new(
     "Rscript", c("run.R"),
-    wd = "backend", env = child_env,
+    wd = "..", env = child_env,
     stdout = "|", stderr = "|"
   )
   withr::defer(if (proc$is_alive()) proc$kill(), envir = .local_envir)
