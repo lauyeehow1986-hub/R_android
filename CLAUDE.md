@@ -67,13 +67,16 @@ Retrofit client, not worth a framework yet):
 - `MainActivity.kt` also hosts `AppRoot`, a two-state (`EDITOR`/`SETTINGS`)
   in-app switch — deliberately no navigation library for two screens.
 - `ui/editor/` — the main screen: `EditorScreen` (Compose UI: code input with
-  R syntax highlighting, Run button, output panel with text + decoded plot
-  bitmaps, plus a run-history bottom sheet) driven by `EditorViewModel`
-  (`StateFlow<EditorUiState>`, standard unidirectional-data-flow — mutate state
-  via `ViewModel` methods, never from the composable). Syntax highlighting is
-  split into a pure tokenizer (`RSyntaxHighlighter`) and a Compose
-  `VisualTransformation` (`RCodeVisualTransformation`) so the tokenizer is
-  unit-testable.
+  R syntax highlighting and a quick-insert operator bar, Run button, output
+  panel with text + decoded plot bitmaps, plus run-history and saved-scripts
+  bottom sheets) driven by `EditorViewModel` (`StateFlow<EditorUiState>`,
+  standard unidirectional-data-flow — mutate state via `ViewModel` methods,
+  never from the composable). The editor field uses a local `TextFieldValue`
+  synced from `uiState.code`, so cursor-aware inserts and history/script loads
+  both work. Pure, unit-tested helpers: `RSyntaxHighlighter` (tokenizer, wrapped
+  by the `RCodeVisualTransformation`), `insertAt` (`EditorTextOps`), and
+  `SavedScriptLibrary` (`data/scripts/`, list ops for named scripts persisted
+  via `SettingsStore`).
 - `ui/settings/` — `SettingsScreen` + `SettingsViewModel` for editing the
   backend URL and API key at runtime, with a "Test connection" action backed by
   `NetworkModule.probeHealth` (pings `<url>/health` through a separate client

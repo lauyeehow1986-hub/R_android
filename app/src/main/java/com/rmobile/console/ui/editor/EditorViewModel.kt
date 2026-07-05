@@ -8,6 +8,9 @@ import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.history.RunHistory
 import com.rmobile.console.data.network.NetworkModule
+import com.rmobile.console.data.scripts.SavedScript
+import com.rmobile.console.data.scripts.SavedScriptLibrary
+import com.rmobile.console.data.scripts.SavedScriptStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,10 +20,13 @@ import kotlinx.coroutines.launch
 class EditorViewModel(
     private val repository: RExecutionRepository = RExecutionRepository(NetworkModule.rExecutionApi),
     private val historyStore: HistoryStore = ServiceLocator.settingsStore,
+    private val scriptStore: SavedScriptStore = ServiceLocator.settingsStore,
     private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(EditorUiState(history = historyStore.load()))
+    private val _uiState = MutableStateFlow(
+        EditorUiState(history = historyStore.load(), savedScripts = scriptStore.loadScripts()),
+    )
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
 
     fun onCodeChanged(code: String) {
@@ -35,6 +41,30 @@ class EditorViewModel(
     fun clearHistory() {
         historyStore.persist(emptyList())
         _uiState.update { it.copy(history = emptyList()) }
+    }
+
+    /** Save the current editor contents as a new named script. No-op if blank. */
+    fun saveCurrentScript(name: String) {
+        val code = _uiState.value.code
+        val trimmedName = name.trim()
+        if (code.isBlank() || trimmedName.isEmpty()) return
+
+        val timestamp = now()
+        val script = SavedScript(id = timestamp, name = trimmedName, code = code, updatedAt = timestamp)
+        val updated = SavedScriptLibrary.upsert(_uiState.value.savedScripts, script)
+        scriptStore.persistScripts(updated)
+        _uiState.update { it.copy(savedScripts = updated) }
+    }
+
+    /** Load a saved script into the editor. */
+    fun loadScript(script: SavedScript) {
+        _uiState.update { it.copy(code = script.code) }
+    }
+
+    fun deleteScript(id: Long) {
+        val updated = SavedScriptLibrary.delete(_uiState.value.savedScripts, id)
+        scriptStore.persistScripts(updated)
+        _uiState.update { it.copy(savedScripts = updated) }
     }
 
     fun runCode() {

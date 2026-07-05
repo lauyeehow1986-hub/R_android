@@ -6,6 +6,8 @@ import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
 import com.rmobile.console.data.network.RExecutionApi
+import com.rmobile.console.data.scripts.SavedScript
+import com.rmobile.console.data.scripts.SavedScriptStore
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -38,11 +40,18 @@ class EditorViewModelTest {
         override fun persist(entries: List<HistoryEntry>) { stored = entries }
     }
 
+    private class InMemoryScriptStore(initial: List<SavedScript> = emptyList()) : SavedScriptStore {
+        var stored: List<SavedScript> = initial
+        override fun loadScripts() = stored
+        override fun persistScripts(scripts: List<SavedScript>) { stored = scripts }
+    }
+
     private fun viewModel(
         api: FakeApi = FakeApi(),
         store: InMemoryHistoryStore = InMemoryHistoryStore(),
+        scriptStore: InMemoryScriptStore = InMemoryScriptStore(),
         now: () -> Long = { 1000L },
-    ) = EditorViewModel(RExecutionRepository(api), store, now)
+    ) = EditorViewModel(RExecutionRepository(api), store, scriptStore, now)
 
     @Test
     fun `initial state loads persisted history`() {
@@ -130,5 +139,59 @@ class EditorViewModelTest {
         vm.clearHistory()
         assertTrue(vm.uiState.value.history.isEmpty())
         assertTrue(store.stored.isEmpty())
+    }
+
+    @Test
+    fun `initial state loads persisted scripts`() {
+        val scriptStore = InMemoryScriptStore(listOf(SavedScript(1, "demo", "1+1", 1)))
+        val vm = viewModel(scriptStore = scriptStore)
+
+        assertEquals("demo", vm.uiState.value.savedScripts.single().name)
+    }
+
+    @Test
+    fun `save current script persists a named entry`() {
+        val scriptStore = InMemoryScriptStore()
+        val vm = viewModel(scriptStore = scriptStore, now = { 77L })
+
+        vm.onCodeChanged("mean(1:10)")
+        vm.saveCurrentScript("  My script  ")
+
+        val saved = vm.uiState.value.savedScripts.single()
+        assertEquals(SavedScript(id = 77L, name = "My script", code = "mean(1:10)", updatedAt = 77L), saved)
+        assertEquals(listOf(saved), scriptStore.stored)
+    }
+
+    @Test
+    fun `save is ignored when name or code is blank`() {
+        val scriptStore = InMemoryScriptStore()
+        val vm = viewModel(scriptStore = scriptStore)
+
+        vm.onCodeChanged("x")
+        vm.saveCurrentScript("   ")
+        vm.onCodeChanged("   ")
+        vm.saveCurrentScript("name")
+
+        assertTrue(vm.uiState.value.savedScripts.isEmpty())
+        assertTrue(scriptStore.stored.isEmpty())
+    }
+
+    @Test
+    fun `load script places its code in the editor`() {
+        val vm = viewModel()
+        vm.loadScript(SavedScript(1, "demo", "plot(cars)", 1))
+
+        assertEquals("plot(cars)", vm.uiState.value.code)
+    }
+
+    @Test
+    fun `delete script removes it from state and store`() {
+        val scriptStore = InMemoryScriptStore(listOf(SavedScript(1, "a", "1", 1)))
+        val vm = viewModel(scriptStore = scriptStore)
+
+        vm.deleteScript(1)
+
+        assertTrue(vm.uiState.value.savedScripts.isEmpty())
+        assertTrue(scriptStore.stored.isEmpty())
     }
 }

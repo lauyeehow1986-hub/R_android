@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,11 +15,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -34,24 +40,47 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rmobile.console.data.history.HistoryEntry
+import com.rmobile.console.data.scripts.SavedScript
 import java.text.DateFormat
 import java.util.Date
+
+/** A token the quick-insert bar can drop at the cursor. [caret] is where the
+ *  caret lands within the inserted text (e.g. 1 to sit inside `()`). */
+private data class InsertToken(val label: String, val text: String, val caret: Int = -1)
+
+private val quickInsertTokens = listOf(
+    InsertToken("<-", "<- "),
+    InsertToken("|>", "|> "),
+    InsertToken("%>%", "%>% "),
+    InsertToken("%in%", " %in% "),
+    InsertToken("( )", "()", caret = 1),
+    InsertToken("[ ]", "[]", caret = 1),
+    InsertToken("{ }", "{}", caret = 1),
+    InsertToken("c()", "c()", caret = 2),
+    InsertToken("$", "$"),
+    InsertToken("<<-", "<<- "),
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,6 +90,31 @@ fun EditorScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showHistory by remember { mutableStateOf(false) }
+    var showSaved by remember { mutableStateOf(false) }
+    var showSaveDialog by remember { mutableStateOf(false) }
+
+    // Local, cursor-aware editor state. Synced from uiState.code so history /
+    // saved-script loads (which change code in the ViewModel) update the field.
+    var field by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(uiState.code, TextRange(uiState.code.length)))
+    }
+    LaunchedEffect(uiState.code) {
+        if (uiState.code != field.text) {
+            field = TextFieldValue(uiState.code, TextRange(uiState.code.length))
+        }
+    }
+
+    val insert: (InsertToken) -> Unit = { token ->
+        val result = insertAt(
+            text = field.text,
+            selStart = field.selection.start,
+            selEnd = field.selection.end,
+            insert = token.text,
+            caret = if (token.caret >= 0) token.caret else token.text.length,
+        )
+        field = TextFieldValue(result.text, TextRange(result.cursor))
+        viewModel.onCodeChanged(result.text)
+    }
 
     val syntaxColors = RSyntaxColors(
         comment = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -75,6 +129,9 @@ fun EditorScreen(
             TopAppBar(
                 title = { Text("R Mobile") },
                 actions = {
+                    IconButton(onClick = { showSaved = true }) {
+                        Icon(Icons.Default.Star, contentDescription = "Saved scripts")
+                    }
                     IconButton(onClick = { showHistory = true }) {
                         Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Run history")
                     }
@@ -93,8 +150,11 @@ fun EditorScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             OutlinedTextField(
-                value = uiState.code,
-                onValueChange = viewModel::onCodeChanged,
+                value = field,
+                onValueChange = {
+                    field = it
+                    viewModel.onCodeChanged(it.text)
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -103,6 +163,8 @@ fun EditorScreen(
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                 visualTransformation = transformation,
             )
+
+            QuickInsertBar(onInsert = insert)
 
             Button(
                 onClick = viewModel::runCode,
@@ -131,6 +193,50 @@ fun EditorScreen(
             onDismiss = { showHistory = false },
         )
     }
+
+    if (showSaved) {
+        SavedScriptsSheet(
+            scripts = uiState.savedScripts,
+            canSaveCurrent = field.text.isNotBlank(),
+            onSaveCurrent = { showSaveDialog = true },
+            onLoad = {
+                viewModel.loadScript(it)
+                showSaved = false
+            },
+            onDelete = { viewModel.deleteScript(it.id) },
+            onDismiss = { showSaved = false },
+        )
+    }
+
+    if (showSaveDialog) {
+        SaveScriptDialog(
+            suggestedName = suggestedName(field.text),
+            onConfirm = {
+                viewModel.saveCurrentScript(it)
+                showSaveDialog = false
+            },
+            onDismiss = { showSaveDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun QuickInsertBar(onInsert: (InsertToken) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        quickInsertTokens.forEach { token ->
+            OutlinedButton(
+                onClick = { onInsert(token) },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                Text(token.label, fontFamily = FontFamily.Monospace)
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -148,7 +254,7 @@ private fun HistorySheet(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Run history", style = MaterialTheme.typography.titleMedium)
                 if (history.isNotEmpty()) {
@@ -199,6 +305,124 @@ private fun HistoryRow(entry: HistoryEntry, label: String, onClick: () -> Unit) 
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SavedScriptsSheet(
+    scripts: List<SavedScript>,
+    canSaveCurrent: Boolean,
+    onSaveCurrent: () -> Unit,
+    onLoad: (SavedScript) -> Unit,
+    onDelete: (SavedScript) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Saved scripts", style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onSaveCurrent, enabled = canSaveCurrent) { Text("Save current") }
+            }
+
+            if (scripts.isEmpty()) {
+                Text(
+                    "No saved scripts yet. Write some R and tap \"Save current\".",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 24.dp),
+                )
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                    items(scripts) { script ->
+                        SavedScriptRow(
+                            script = script,
+                            label = dateFormat.format(Date(script.updatedAt)),
+                            onClick = { onLoad(script) },
+                            onDelete = { onDelete(script) },
+                        )
+                        HorizontalDivider()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedScriptRow(
+    script: SavedScript,
+    label: String,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onClick)
+                .padding(vertical = 12.dp),
+        ) {
+            Text(
+                text = script.name,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+            )
+            Text(
+                text = script.code.trim().lineSequence().firstOrNull().orEmpty(),
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Default.Delete, contentDescription = "Delete script")
+        }
+    }
+}
+
+@Composable
+private fun SaveScriptDialog(
+    suggestedName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(suggestedName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Save script") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Name") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -288,6 +512,12 @@ private fun TimeoutBanner(message: String?) {
             modifier = Modifier.padding(12.dp),
         )
     }
+}
+
+/** A sensible default name for a script: its first meaningful line. */
+private fun suggestedName(code: String): String {
+    val firstLine = code.trim().lineSequence().firstOrNull().orEmpty()
+    return firstLine.removePrefix("#").trim().take(40).ifBlank { "Untitled script" }
 }
 
 private fun decodeBase64Png(base64: String) = runCatching {

@@ -1,6 +1,7 @@
 package com.rmobile.console.ui.editor
 
 import com.rmobile.console.data.history.HistoryEntry
+import com.rmobile.console.data.scripts.SavedScript
 
 data class EditorUiState(
     val code: String = "# Write R code and tap Run\nsummary(cars)\nplot(cars)\n",
@@ -13,4 +14,6 @@ data class EditorUiState(
     val timedOut: Boolean = false,
     /** Past runs, newest first. Backed by persistent storage. */
     val history: List<HistoryEntry> = emptyList(),
+    /** User-named saved scripts, most-recently-updated first. */
+    val savedScripts: List<SavedScript> = emptyList(),
 )

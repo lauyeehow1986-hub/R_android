@@ -29,8 +29,10 @@ together. See `backend/README.md` for backend-specific setup and — important
 ## Features
 
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
-- **R syntax highlighting** in the editor.
-- **Run history** (persisted) — reopen and restore past snippets.
+- **R syntax highlighting** and a **quick-insert bar** for common operators
+  (`<-`, `|>`, `%>%`, `()`, …).
+- **Named saved scripts** and **run history**, both persisted — reopen, restore,
+  and delete.
 - **In-app Settings** — change the backend URL and API key at runtime, with a
   **Test connection** button that pings the backend's `/health`.
 - **Copy output** to the clipboard and **share plots** as PNGs.
