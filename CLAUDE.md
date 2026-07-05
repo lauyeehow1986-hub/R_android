@@ -125,9 +125,24 @@ existing iOS apps advertise), collects stdout/stderr and any
 just the Plumber bootstrap (`plumb("plumber.R")$run(...)`).
 
 `plumber.R` also has two Plumber filters (`auth`, `ratelimit`) that guard
-`/execute` only (health checks stay open): optional `X-API-Key` auth when
-`R_API_KEY` is set, and an in-process per-IP fixed-window rate limit when
+`/execute` and `/reset` (health checks stay open): optional `X-API-Key` auth
+when `R_API_KEY` is set, and an in-process per-IP fixed-window rate limit when
 `R_RATE_LIMIT_PER_MINUTE > 0`. Both are **off by default** for local dev.
+
+**Durable sessions**: the wrapper the handler builds around user code has two
+bookends — before the code it `load()`s a per-session `workspace.RData` and
+replays recorded `library()` calls; after a **successful** run it `save.image()`s
+and writes the attached-package list (a failed/timed-out run never reaches the
+save, so it can't corrupt state). State lives under `R_SESSION_DIR` (default
+`/data/sessions`, a named volume mounted read-write into the otherwise
+read-only container). `/execute` takes an optional `sessionId` (sanitized to
+`[A-Za-z0-9_-]`, default `"default"`) and returns `workspaceObjects` (names in
+the session's global env, or absent on error); `POST /reset` deletes a session's
+files. `run.R` is the Plumber bootstrap and **also sets an unboxed-JSON
+serializer** (`serializer_json(auto_unbox = TRUE, null = "null")`) so length-1
+vectors serialize as scalars (matching the Kotlin models) and NULL becomes
+JSON null — without this, plumber array-wraps every scalar and the app can't
+parse responses.
 
 The Dockerfile/`docker-compose.yml` run this as an unprivileged user with a
 read-only root filesystem, dropped capabilities, and CPU/memory limits —
@@ -141,20 +156,25 @@ here have different stakes than changes to the Android UI.
 
 ### Response contract between the two halves
 
-`ExecuteRequest`/`ExecuteResponse` in
+`ExecuteRequest`/`ExecuteResponse`/`ResetRequest`/`ResetResponse` in
 `app/src/main/java/com/rmobile/console/data/model/ExecuteModels.kt`
 (kotlinx.serialization) must stay in sync field-for-field with the JSON
-list returned by `plumber.R`'s `/execute` handler (`stdout`, `stderr`,
-`plots`, `error`, `timedOut`). There's no shared schema file — if you add a
-field on one side, add it on the other by hand.
+returned by `plumber.R`. `/execute`: request `code` + optional `sessionId`;
+response `stdout`, `stderr`, `plots`, `error`, `timedOut`, `workspaceObjects`
+(nullable). `/reset`: request `sessionId`, response `ok`. There's no shared
+schema file — if you add a field on one side, add it on the other by hand, and
+remember the backend must emit **unboxed** JSON (see `run.R`) or scalar fields
+won't deserialize.
 
 ## Current scope / what's deliberately not built yet
 
 Built so far: the editor screen (write code, run, see output) with R syntax
-highlighting and a persisted run-history sheet; a Settings screen for the
-backend URL + API key at runtime; JVM unit tests (`app/src/test/`) plus a
-GitHub Actions CI workflow; and optional API-key auth + per-IP rate limiting
-on the backend.
+highlighting, a quick-insert operator bar, named saved scripts, and a persisted
+run-history sheet; a Settings screen for the backend URL + API key at runtime;
+clipboard/plot sharing; a **durable R session** (workspace + attached packages
+persist across runs/restarts, with a workspace summary and a reset action); JVM
+unit tests (`app/src/test/`) plus a GitHub Actions CI workflow; and optional
+API-key auth + per-IP rate limiting on the backend.
 
 Still **not** built — don't assume these exist: package-installation UI,
 multi-file projects, on-device execution, network-egress restriction or
