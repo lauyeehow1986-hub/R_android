@@ -43,7 +43,7 @@ INSTALL_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_INSTALL_TIMEOUT_SECONDS", "3
 CRAN_REPO <- Sys.getenv("R_CRAN_REPO", "https://packagemanager.posit.co/cran/__linux__/jammy/latest")
 
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -196,6 +196,61 @@ function(req, res) {
   paths <- session_paths(session_id)
   unlink(c(paths$workspace, paths$attached), force = TRUE)
   list(ok = TRUE)
+}
+
+#* Install a CRAN package into the shared library
+#* @post /install
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  pkg <- body$package
+  if (is.null(pkg) || !is.character(pkg) || length(pkg) != 1 || !grepl("^[A-Za-z0-9._]+$", pkg)) {
+    res$status <- 400
+    return(list(stdout = "", stderr = "", error = "Invalid or missing 'package' name.",
+                timedOut = FALSE, installed = FALSE, systemRequirements = NULL))
+  }
+
+  dir.create(PKG_LIB, recursive = TRUE, showWarnings = FALSE)
+  run_dir <- file.path(tempdir(), paste0("install-", format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", sample.int(1e6, 1)))
+  dir.create(run_dir, recursive = TRUE)
+  on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  script_path <- file.path(run_dir, "install.R")
+
+  writeLines(c(
+    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(PKG_LIB)),
+    'options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(), paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))',
+    sprintf('install.packages(%s, repos = %s, lib = %s)', shQuote(pkg), shQuote(CRAN_REPO), shQuote(PKG_LIB))
+  ), script_path)
+
+  result <- tryCatch(
+    processx::run("Rscript", c("--vanilla", script_path), wd = run_dir,
+                  timeout = INSTALL_TIMEOUT_SECONDS, error_on_status = FALSE),
+    error = function(e) e
+  )
+  if (inherits(result, "error")) {
+    timed_out <- grepl("timed out", conditionMessage(result), ignore.case = TRUE)
+    return(list(stdout = "", stderr = conditionMessage(result),
+                error = if (timed_out) sprintf("Install timed out after %ss.", INSTALL_TIMEOUT_SECONDS) else "Install failed to start.",
+                timedOut = timed_out, installed = FALSE, systemRequirements = NULL))
+  }
+
+  installed <- pkg %in% rownames(installed.packages(lib.loc = PKG_LIB))
+
+  sysreqs <- NULL
+  if (!installed && requireNamespace("remotes", quietly = TRUE)) {
+    sysreqs <- tryCatch({
+      reqs <- remotes::system_requirements("ubuntu", "22.04", package = pkg)
+      if (length(reqs)) paste(reqs, collapse = "\n") else NULL
+    }, error = function(e) NULL)
+  }
+
+  list(
+    stdout = result$stdout,
+    stderr = result$stderr,
+    error = if (!installed) sprintf("Package '%s' was not installed.", pkg) else NULL,
+    timedOut = FALSE,
+    installed = installed,
+    systemRequirements = sysreqs
+  )
 }
 
 #* Health check
