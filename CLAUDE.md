@@ -75,7 +75,14 @@ Retrofit client, not worth a framework yet):
   `VisualTransformation` (`RCodeVisualTransformation`) so the tokenizer is
   unit-testable.
 - `ui/settings/` — `SettingsScreen` + `SettingsViewModel` for editing the
-  backend URL and API key at runtime.
+  backend URL and API key at runtime, with a "Test connection" action backed by
+  `NetworkModule.probeHealth` (pings `<url>/health` through a separate client
+  that bypasses the host-rewriting interceptor, so an unsaved URL can be
+  checked). `SettingsViewModel` depends on the `AppSettings` interface (not the
+  concrete `SettingsStore`) so it's unit-testable without SharedPreferences.
+- Plot sharing (`ui/editor/PlotSharing.kt`) writes a decoded PNG to
+  `cacheDir/shared` and opens a share sheet via a `FileProvider` declared in the
+  manifest (`res/xml/file_paths.xml`); "Copy output" uses the Compose clipboard.
 - `data/` — `RExecutionRepository` wraps `RExecutionApi` (Retrofit
   interface) in a `Result`-returning suspend call. `data/network/NetworkModule`
   is the single hand-rolled DI point: one lazily-built OkHttp/Retrofit

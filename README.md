@@ -31,7 +31,10 @@ together. See `backend/README.md` for backend-specific setup and — important
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
 - **R syntax highlighting** in the editor.
 - **Run history** (persisted) — reopen and restore past snippets.
-- **In-app Settings** — change the backend URL and API key at runtime.
+- **In-app Settings** — change the backend URL and API key at runtime, with a
+  **Test connection** button that pings the backend's `/health`.
+- **Copy output** to the clipboard and **share plots** as PNGs.
+- Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
 Not built yet: package installation UI, multi-file projects, on-device
