@@ -43,6 +43,19 @@ class EditorViewModel(
         _uiState.update { it.copy(history = emptyList()) }
     }
 
+    /** Clears the backend session's workspace. */
+    fun resetSession() {
+        viewModelScope.launch {
+            repository.reset()
+                .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
+                .onFailure { throwable ->
+                    _uiState.update {
+                        it.copy(errorMessage = throwable.message ?: "Failed to reset the session.")
+                    }
+                }
+        }
+    }
+
     /** Save the current editor contents as a new named script. No-op if blank. */
     fun saveCurrentScript(name: String) {
         val code = _uiState.value.code
@@ -85,6 +98,7 @@ class EditorViewModel(
                             plotsBase64 = response.plots,
                             errorMessage = response.error,
                             timedOut = response.timedOut,
+                            workspaceObjects = response.workspaceObjects ?: it.workspaceObjects,
                         )
                     }
                 }

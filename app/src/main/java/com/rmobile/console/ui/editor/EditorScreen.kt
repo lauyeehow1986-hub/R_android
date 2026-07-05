@@ -20,12 +20,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -92,6 +95,8 @@ fun EditorScreen(
     var showHistory by remember { mutableStateOf(false) }
     var showSaved by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showResetConfirm by remember { mutableStateOf(false) }
 
     // Local, cursor-aware editor state. Synced from uiState.code so history /
     // saved-script loads (which change code in the ViewModel) update the field.
@@ -138,6 +143,18 @@ fun EditorScreen(
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Reset session") },
+                            onClick = {
+                                menuOpen = false
+                                showResetConfirm = true
+                            },
+                        )
+                    }
                 },
             )
         },
@@ -178,6 +195,16 @@ fun EditorScreen(
                 }
             }
 
+            if (uiState.workspaceObjects.isNotEmpty()) {
+                Text(
+                    text = "Workspace: ${uiState.workspaceObjects.joinToString(", ")} " +
+                        "(${uiState.workspaceObjects.size})",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                )
+            }
+
             OutputPanel(uiState = uiState, modifier = Modifier.weight(1.2f))
         }
     }
@@ -216,6 +243,30 @@ fun EditorScreen(
                 showSaveDialog = false
             },
             onDismiss = { showSaveDialog = false },
+        )
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text("Reset session?") },
+            text = {
+                Text(
+                    "This clears the R workspace on the backend — saved variables and " +
+                        "attached packages are lost. Your saved scripts are not affected.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.resetSession()
+                        showResetConfirm = false
+                    },
+                ) { Text("Reset") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) { Text("Cancel") }
+            },
         )
     }
 }

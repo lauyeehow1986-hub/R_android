@@ -27,7 +27,22 @@ curl -X POST http://localhost:8000/execute \
   `{"stdout", "stderr", "plots": ["<base64 png>", ...], "error", "timedOut"}`.
   When `R_API_KEY` is set, requires an `X-API-Key: <key>` header (else `401`);
   returns `429` if the per-IP rate limit is exceeded.
+  Optional `sessionId` (defaults to `default`); the response adds
+  `workspaceObjects` (names in the session's global env after the run, or
+  omitted when the run errored/timed out).
+- `POST /reset` — body `{"sessionId": "default"}`, clears that session's saved
+  workspace and attached-package list. Returns `{"ok": true}`. Same auth /
+  rate-limit rules as `/execute`.
 - `GET /health` — liveness check (never requires auth).
+
+## Durable sessions
+
+Each session keeps `workspace.RData` (global-env objects) and `attached.txt`
+(user-attached packages) under `R_SESSION_DIR` (default `/data/sessions`, a
+named volume in `docker-compose.yml`). The wrapper restores them before each
+run and saves them after a **successful** run, so a failed or timed-out run
+never overwrites good state. Only data/objects and attached packages persist —
+connections, external pointers, and `options()` do not.
 
 ## Security — read this before deploying anywhere reachable from the internet
 
@@ -69,6 +84,10 @@ own dev machine:
   `REMOTE_ADDR`; behind a proxy you'd want it to read `X-Forwarded-For`.
 - **Disk quota isn't enforced** beyond the OS temp cleanup — a script that
   fills the tmpfs before its timeout fires could still cause problems.
+- **Session state is unbounded and attacker-writable.** Persisted workspaces
+  can grow without limit and hold arbitrary user data; there is no per-session
+  quota or eviction yet. The `sessionId` is sanitized to `[A-Za-z0-9_-]` — keep
+  that guard if you add real multi-session support.
 
 Treat this as a working MVP for local development, not a hardened multi-user
 service.

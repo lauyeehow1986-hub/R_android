@@ -11,6 +11,7 @@ RUN install2.r --error --skipmissing \
     jsonlite
 
 RUN useradd --create-home --shell /bin/bash rexec
+RUN mkdir -p /data/sessions && chown -R rexec:rexec /data
 WORKDIR /home/rexec/app
 COPY plumber.R run.R ./
 RUN chown -R rexec:rexec /home/rexec

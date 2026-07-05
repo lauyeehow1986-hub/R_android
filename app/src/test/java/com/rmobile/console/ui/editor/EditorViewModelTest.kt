@@ -5,6 +5,8 @@ import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.ResetRequest
+import com.rmobile.console.data.model.ResetResponse
 import com.rmobile.console.data.network.RExecutionApi
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptStore
@@ -27,10 +29,16 @@ class EditorViewModelTest {
     private class FakeApi(
         var response: ExecuteResponse = ExecuteResponse(stdout = "ok"),
         var error: Throwable? = null,
+        var resetResponse: ResetResponse = ResetResponse(ok = true),
+        var resetError: Throwable? = null,
     ) : RExecutionApi {
         override suspend fun execute(request: ExecuteRequest): ExecuteResponse {
             error?.let { throw it }
             return response
+        }
+        override suspend fun reset(request: ResetRequest): ResetResponse {
+            resetError?.let { throw it }
+            return resetResponse
         }
     }
 
@@ -193,5 +201,48 @@ class EditorViewModelTest {
 
         assertTrue(vm.uiState.value.savedScripts.isEmpty())
         assertTrue(scriptStore.stored.isEmpty())
+    }
+
+    @Test
+    fun `successful run stores workspace objects`() = runTest {
+        val vm = viewModel(api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("x", "df"))))
+
+        vm.onCodeChanged("x <- 1")
+        vm.runCode()
+        advanceUntilIdle()
+
+        assertEquals(listOf("x", "df"), vm.uiState.value.workspaceObjects)
+    }
+
+    @Test
+    fun `errored run leaves workspace objects unchanged`() = runTest {
+        val api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("x")))
+        val vm = viewModel(api = api)
+
+        vm.onCodeChanged("x <- 1")
+        vm.runCode()
+        advanceUntilIdle()
+        // Next run errors on the backend: workspaceObjects null in the response.
+        api.response = ExecuteResponse(error = "boom", workspaceObjects = null)
+        vm.onCodeChanged("stop('boom')")
+        vm.runCode()
+        advanceUntilIdle()
+
+        assertEquals(listOf("x"), vm.uiState.value.workspaceObjects)
+    }
+
+    @Test
+    fun `reset session clears workspace objects`() = runTest {
+        val vm = viewModel(api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("x"))))
+
+        vm.onCodeChanged("x <- 1")
+        vm.runCode()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.workspaceObjects.isNotEmpty())
+
+        vm.resetSession()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.workspaceObjects.isEmpty())
     }
 }

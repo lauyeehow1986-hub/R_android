@@ -15,8 +15,30 @@ API_KEY <- Sys.getenv("R_API_KEY", "")
 RATE_LIMIT_PER_MINUTE <- as.numeric(Sys.getenv("R_RATE_LIMIT_PER_MINUTE", "0"))
 .rate_state <- new.env(parent = emptyenv())
 
+# Durable-session state lives under this writable root (a Docker volume in prod).
+SESSION_DIR <- Sys.getenv("R_SESSION_DIR", file.path(tempdir(), "r-sessions"))
+DEFAULT_SESSION <- "default"
+# Packages attached by default in a --vanilla session; only user-added ones are persisted.
+DEFAULT_ATTACHED <- c("base", "methods", "datasets", "utils", "grDevices", "graphics", "stats")
+
+# Reduce an incoming session id to a safe directory name (path-traversal guard).
+sanitize_session_id <- function(id) {
+  if (is.null(id) || !is.character(id) || length(id) != 1) return(DEFAULT_SESSION)
+  cleaned <- gsub("[^A-Za-z0-9_-]", "", id)
+  if (nzchar(cleaned)) cleaned else DEFAULT_SESSION
+}
+
+session_paths <- function(session_id) {
+  dir <- file.path(SESSION_DIR, session_id)
+  list(
+    dir = dir,
+    workspace = file.path(dir, "workspace.RData"),
+    attached = file.path(dir, "attached.txt")
+  )
+}
+
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) identical(req$PATH_INFO, "/execute")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -88,12 +110,34 @@ function(req, res) {
   script_path <- file.path(run_dir, "script.R")
   plot_pattern <- file.path(run_dir, "plot%03d.png")
 
+  session_id <- sanitize_session_id(body$sessionId)
+  paths <- session_paths(session_id)
+  dir.create(paths$dir, recursive = TRUE, showWarnings = FALSE)
+  objects_path <- file.path(run_dir, "objects.txt")
+
+  attached_literal <- paste(deparse(DEFAULT_ATTACHED), collapse = "")
+
   # Every script gets a PNG device so plot() calls are captured as images instead
   # of failing for lack of a display. dev.off() flushes the last page to disk.
+  # Before user code: restore the saved workspace + attached packages (if any).
+  # After user code: persist workspace + attached-package list back to the session dir.
   wrapped <- c(
-    sprintf("grDevices::png(filename = %s, width = 800, height = 600)", shQuote(plot_pattern)),
+    sprintf(
+      'tryCatch(if (file.exists(%s)) load(%s, envir = globalenv()), error = function(e) try(file.rename(%s, %s), silent = TRUE))',
+      shQuote(paths$workspace), shQuote(paths$workspace),
+      shQuote(paths$workspace), shQuote(paste0(paths$workspace, ".bad"))
+    ),
+    sprintf(
+      'if (file.exists(%s)) invisible(lapply(readLines(%s), function(p) if (nzchar(p)) suppressWarnings(suppressMessages(try(library(p, character.only = TRUE), silent = TRUE)))))',
+      shQuote(paths$attached), shQuote(paths$attached)
+    ),
+    sprintf('grDevices::png(filename = %s, width = 800, height = 600)', shQuote(plot_pattern)),
     code,
-    "invisible(grDevices::dev.off())"
+    'invisible(grDevices::dev.off())',
+    sprintf('.saved <- try(save.image(%s), silent = TRUE)', shQuote(paths$workspace)),
+    'if (inherits(.saved, "try-error")) message("Note: some objects could not be saved; workspace state was not updated.")',
+    sprintf('writeLines(setdiff(.packages(), %s), %s)', attached_literal, shQuote(paths$attached)),
+    sprintf('writeLines(ls(globalenv()), %s)', shQuote(objects_path))
   )
   writeLines(wrapped, script_path)
 
@@ -105,7 +149,7 @@ function(req, res) {
       timeout = EXECUTION_TIMEOUT_SECONDS,
       error_on_status = FALSE
     ),
-    error = function(e) e,
+    error = function(e) e
   )
 
   if (inherits(result, "error")) {
@@ -119,12 +163,14 @@ function(req, res) {
       } else {
         "Execution failed to start."
       },
-      timedOut = timed_out,
+      timedOut = timed_out
     ))
   }
 
   plot_files <- sort(list.files(run_dir, pattern = "^plot[0-9]+\\.png$", full.names = TRUE))
   plots <- lapply(plot_files, base64enc::base64encode)
+
+  workspace_objects <- if (file.exists(objects_path)) as.list(readLines(objects_path)) else NULL
 
   list(
     stdout = result$stdout,
@@ -132,7 +178,18 @@ function(req, res) {
     plots = plots,
     error = if (result$status != 0) sprintf("R exited with status %d.", result$status) else NULL,
     timedOut = FALSE,
+    workspaceObjects = workspace_objects
   )
+}
+
+#* Reset a session's persisted workspace + attached-package state
+#* @post /reset
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  session_id <- sanitize_session_id(body$sessionId)
+  paths <- session_paths(session_id)
+  unlink(c(paths$workspace, paths$attached), force = TRUE)
+  list(ok = TRUE)
 }
 
 #* Health check

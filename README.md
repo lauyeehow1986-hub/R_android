@@ -36,6 +36,9 @@ together. See `backend/README.md` for backend-specific setup and — important
 - **In-app Settings** — change the backend URL and API key at runtime, with a
   **Test connection** button that pings the backend's `/health`.
 - **Copy output** to the clipboard and **share plots** as PNGs.
+- **Durable R session** — variables and attached packages persist between runs
+  and restarts; a workspace summary shows what's in scope, and "Reset session"
+  clears it.
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 

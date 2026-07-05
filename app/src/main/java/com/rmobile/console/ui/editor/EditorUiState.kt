@@ -16,4 +16,6 @@ data class EditorUiState(
     val history: List<HistoryEntry> = emptyList(),
     /** User-named saved scripts, most-recently-updated first. */
     val savedScripts: List<SavedScript> = emptyList(),
+    /** Names of objects in the backend session's global env; empty when unknown/cleared. */
+    val workspaceObjects: List<String> = emptyList(),
 )
