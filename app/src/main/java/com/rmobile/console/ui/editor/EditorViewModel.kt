@@ -41,7 +41,7 @@ class EditorViewModel(
         val code = _uiState.value.code
         if (code.isBlank() || _uiState.value.isRunning) return
 
-        _uiState.update { it.copy(isRunning = true, errorMessage = null) }
+        _uiState.update { it.copy(isRunning = true, errorMessage = null, timedOut = false) }
         recordHistory(code)
 
         viewModelScope.launch {
@@ -54,6 +54,7 @@ class EditorViewModel(
                             stderr = response.stderr,
                             plotsBase64 = response.plots,
                             errorMessage = response.error,
+                            timedOut = response.timedOut,
                         )
                     }
                 }
@@ -62,6 +63,7 @@ class EditorViewModel(
                         it.copy(
                             isRunning = false,
                             errorMessage = throwable.message ?: "Failed to reach the R execution backend.",
+                            timedOut = false,
                         )
                     }
                 }

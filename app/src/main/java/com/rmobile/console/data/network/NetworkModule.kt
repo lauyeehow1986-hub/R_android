@@ -1,11 +1,15 @@
 package com.rmobile.console.data.network
 
 import com.rmobile.console.BuildConfig
+import com.rmobile.console.data.settings.BaseUrlValidator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -59,6 +63,33 @@ object NetworkModule {
             .build()
             .create(RExecutionApi::class.java)
     }
+
+    // A plain client with no host-rewriting interceptor, so a connection test can
+    // hit an arbitrary (not-yet-saved) URL directly.
+    private val probeClient: OkHttpClient by lazy {
+        OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
+    }
+
+    /**
+     * Liveness check against `<baseUrl>health` (never requires auth server-side,
+     * but the key is sent anyway). Confirms the backend is reachable; it does not
+     * validate the API key, since only `/execute` is protected.
+     */
+    suspend fun probeHealth(baseUrl: String, apiKey: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val normalized = BaseUrlValidator.normalize(baseUrl)
+                    ?: error("Enter a valid http(s) URL first.")
+                val request = Request.Builder()
+                    .url(normalized + "health")
+                    .get()
+                    .apply { if (apiKey.isNotBlank()) header("X-API-Key", apiKey) }
+                    .build()
+                probeClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) error("Backend responded with HTTP ${response.code}.")
+                }
+            }
+        }
 }
 
 /**

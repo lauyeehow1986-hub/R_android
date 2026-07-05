@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
  * pure logic lives in [BaseUrlValidator] and
  * [com.rmobile.console.data.history.RunHistory] so it stays unit-testable.
  */
-class SettingsStore(context: Context) : HistoryStore {
+class SettingsStore(context: Context) : HistoryStore, AppSettings {
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -22,16 +22,16 @@ class SettingsStore(context: Context) : HistoryStore {
     private val json = Json { ignoreUnknownKeys = true }
 
     /** The backend base URL, falling back to the build-time default. */
-    var baseUrl: String
+    override var baseUrl: String
         get() = prefs.getString(KEY_BASE_URL, null) ?: BuildConfig.R_EXECUTION_BASE_URL
         set(value) = prefs.edit().putString(KEY_BASE_URL, value).apply()
 
     /** Optional API key sent as `X-API-Key`; blank means "don't send one". */
-    var apiKey: String
+    override var apiKey: String
         get() = prefs.getString(KEY_API_KEY, null) ?: ""
         set(value) = prefs.edit().putString(KEY_API_KEY, value).apply()
 
-    val defaultBaseUrl: String get() = BuildConfig.R_EXECUTION_BASE_URL
+    override val defaultBaseUrl: String get() = BuildConfig.R_EXECUTION_BASE_URL
 
     override fun load(): List<HistoryEntry> {
         val raw = prefs.getString(KEY_HISTORY, null) ?: return emptyList()

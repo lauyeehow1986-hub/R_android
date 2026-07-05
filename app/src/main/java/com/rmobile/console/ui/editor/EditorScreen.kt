@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -28,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -40,6 +42,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -198,21 +203,44 @@ private fun HistoryRow(entry: HistoryEntry, label: String, onClick: () -> Unit) 
 
 @Composable
 private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val consoleText = buildString {
+        if (uiState.stdout.isNotBlank()) append(uiState.stdout)
+        if (uiState.stderr.isNotBlank()) {
+            if (isNotEmpty()) append('\n')
+            append(uiState.stderr)
+        }
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(vertical = 4.dp),
     ) {
-        val errorMessage = uiState.errorMessage
-        if (errorMessage != null) {
+        if (uiState.timedOut) {
+            item { TimeoutBanner(uiState.errorMessage) }
+        } else if (uiState.errorMessage != null) {
             item {
                 Text(
-                    text = errorMessage,
+                    text = uiState.errorMessage,
                     color = MaterialTheme.colorScheme.error,
                     fontFamily = FontFamily.Monospace,
                 )
             }
         }
+
+        if (consoleText.isNotEmpty()) {
+            item {
+                TextButton(
+                    onClick = { clipboard.setText(AnnotatedString(consoleText)) },
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text("Copy output")
+                }
+            }
+        }
+
         if (uiState.stdout.isNotBlank()) {
             item {
                 Text(text = uiState.stdout, fontFamily = FontFamily.Monospace)
@@ -230,9 +258,35 @@ private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
         items(uiState.plotsBase64) { base64Png ->
             val bitmap = remember(base64Png) { decodeBase64Png(base64Png) }
             bitmap?.let {
-                Image(bitmap = it.asImageBitmap(), contentDescription = "R plot output")
+                Column {
+                    Image(bitmap = it.asImageBitmap(), contentDescription = "R plot output")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        IconButton(onClick = { sharePlotPng(context, base64Png) }) {
+                            Icon(Icons.Default.Share, contentDescription = "Share plot")
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun TimeoutBanner(message: String?) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = message ?: "Execution timed out.",
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(12.dp),
+        )
     }
 }
 

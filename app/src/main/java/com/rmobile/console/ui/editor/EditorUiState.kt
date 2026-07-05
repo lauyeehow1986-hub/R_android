@@ -9,6 +9,8 @@ data class EditorUiState(
     val stderr: String = "",
     val plotsBase64: List<String> = emptyList(),
     val errorMessage: String? = null,
+    /** True when the last run hit the backend's execution timeout. */
+    val timedOut: Boolean = false,
     /** Past runs, newest first. Backed by persistent storage. */
     val history: List<HistoryEntry> = emptyList(),
 )

@@ -69,6 +69,21 @@ class EditorViewModelTest {
     }
 
     @Test
+    fun `timed-out response sets the timedOut flag`() = runTest {
+        val vm = viewModel(
+            api = FakeApi(ExecuteResponse(error = "Execution timed out after 20s.", timedOut = true)),
+        )
+
+        vm.onCodeChanged("Sys.sleep(60)")
+        vm.runCode()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertTrue(state.timedOut)
+        assertEquals("Execution timed out after 20s.", state.errorMessage)
+    }
+
+    @Test
     fun `failed run surfaces an error message`() = runTest {
         val vm = viewModel(api = FakeApi(error = RuntimeException("boom")))
 
