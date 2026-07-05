@@ -25,7 +25,9 @@ curl -X POST http://localhost:8000/execute \
 
 - `POST /execute` — body `{"code": "<R source>"}`, returns
   `{"stdout", "stderr", "plots": ["<base64 png>", ...], "error", "timedOut"}`.
-- `GET /health` — liveness check.
+  When `R_API_KEY` is set, requires an `X-API-Key: <key>` header (else `401`);
+  returns `429` if the per-IP rate limit is exceeded.
+- `GET /health` — liveness check (never requires auth).
 
 ## Security — read this before deploying anywhere reachable from the internet
 
@@ -41,6 +43,13 @@ in place today:
   filesystem, all Linux capabilities dropped, and `no-new-privileges`
   (`docker-compose.yml`).
 - CPU and memory are capped at the container level (`cpus`, `mem_limit`).
+- **Optional shared-secret auth**: set `R_API_KEY` and `/execute` requires a
+  matching `X-API-Key` header (401 otherwise). Unset = disabled, for local dev.
+- **Optional per-IP rate limiting**: set `R_RATE_LIMIT_PER_MINUTE` to a
+  positive number to throttle `/execute` per client IP (429 when exceeded).
+  `0`/unset disables it. This is an in-process fixed-window counter — good
+  enough for a single instance, not a substitute for a real gateway/WAF across
+  a fleet.
 
 What is **not** handled, and needs to be before this is exposed beyond your
 own dev machine:
@@ -54,8 +63,10 @@ own dev machine:
   multi-tenant use, run each execution in its own ephemeral container,
   gVisor sandbox, or microVM (Firecracker) rather than trusting Linux
   capability-dropping alone.
-- **No auth, no rate limiting.** Add both before this is reachable from
-  anything but a trusted client on a private network.
+- **Auth and rate limiting exist but are off by default.** Set `R_API_KEY`
+  and `R_RATE_LIMIT_PER_MINUTE` (above) before this is reachable from anything
+  but a trusted client on a private network. The rate limiter also trusts
+  `REMOTE_ADDR`; behind a proxy you'd want it to read `X-Forwarded-For`.
 - **Disk quota isn't enforced** beyond the OS temp cleanup — a script that
   fills the tmpfs before its timeout fires could still cause problems.
 

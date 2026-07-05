@@ -5,8 +5,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.rmobile.console.ui.editor.EditorScreen
+import com.rmobile.console.ui.settings.SettingsScreen
 import com.rmobile.console.ui.theme.RConsoleTheme
 
 class MainActivity : ComponentActivity() {
@@ -15,9 +21,23 @@ class MainActivity : ComponentActivity() {
         setContent {
             RConsoleTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    EditorScreen()
+                    AppRoot()
                 }
             }
         }
+    }
+}
+
+private enum class Screen { EDITOR, SETTINGS }
+
+@Composable
+private fun AppRoot() {
+    // Lightweight in-app navigation — the app has two screens, not enough to
+    // justify a navigation library.
+    var screen by rememberSaveable { mutableStateOf(Screen.EDITOR) }
+
+    when (screen) {
+        Screen.EDITOR -> EditorScreen(onOpenSettings = { screen = Screen.SETTINGS })
+        Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.EDITOR })
     }
 }
