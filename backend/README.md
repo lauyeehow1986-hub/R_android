@@ -21,6 +21,17 @@ curl -X POST http://localhost:8000/execute \
   -d '{"code": "summary(cars)\nplot(cars)"}'
 ```
 
+## Running the tests
+
+Integration tests (testthat + httr2) start a Plumber instance and exercise every
+endpoint over HTTP. With R installed and the packages `plumber, processx,
+base64enc, jsonlite, testthat, httr2, withr`:
+
+    Rscript backend/run-tests.R
+
+Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
+`test-*.R` are the cases). CI runs them on every push/PR.
+
 ## Endpoints
 
 - `POST /execute` — body `{"code": "<R source>"}`, returns

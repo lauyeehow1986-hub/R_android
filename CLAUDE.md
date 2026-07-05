@@ -52,8 +52,9 @@ curl -X POST http://localhost:8000/execute -H "Content-Type: application/json" \
   -d '{"code": "summary(cars)\nplot(cars)"}'
 ```
 
-There's no separate backend test suite yet — validate changes to
-`plumber.R` by hitting `/execute` directly with curl.
+Backend integration tests live in `backend/tests/` (testthat + httr2), run with
+`Rscript backend/run-tests.R`; they start a real Plumber instance and cover
+`/execute`, `/reset`, sessions, auth, and rate limiting. CI runs them on push/PR.
 
 ## Architecture
 
@@ -177,6 +178,5 @@ unit tests (`app/src/test/`) plus a GitHub Actions CI workflow; and optional
 API-key auth + per-IP rate limiting on the backend.
 
 Still **not** built — don't assume these exist: package-installation UI,
-multi-file projects, on-device execution, network-egress restriction or
-per-request VM isolation on the backend, and any backend automated test suite
-(validate `plumber.R` by hitting `/execute` with curl).
+multi-file projects, on-device execution, and network-egress restriction or
+per-request VM isolation on the backend.
