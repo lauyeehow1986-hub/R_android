@@ -7,6 +7,59 @@ library(jsonlite)
 EXECUTION_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_EXECUTION_TIMEOUT_SECONDS", "20"))
 MAX_CODE_LENGTH <- as.numeric(Sys.getenv("R_MAX_CODE_LENGTH", "20000"))
 
+# Optional shared-secret auth. When R_API_KEY is set, /execute requires a
+# matching X-API-Key header; when unset, auth is disabled (local-dev default).
+API_KEY <- Sys.getenv("R_API_KEY", "")
+
+# Simple per-IP fixed-window rate limit. 0 disables it.
+RATE_LIMIT_PER_MINUTE <- as.numeric(Sys.getenv("R_RATE_LIMIT_PER_MINUTE", "0"))
+.rate_state <- new.env(parent = emptyenv())
+
+# Only the execution endpoint is protected; /health stays open for probes.
+is_protected <- function(req) identical(req$PATH_INFO, "/execute")
+
+#* Require a valid API key on protected routes when one is configured.
+#* @filter auth
+function(req, res) {
+  if (nzchar(API_KEY) && is_protected(req)) {
+    provided <- req$HTTP_X_API_KEY
+    if (is.null(provided) || !identical(provided, API_KEY)) {
+      res$status <- 401
+      return(list(stdout = "", stderr = "", plots = list(), error = "Unauthorized.", timedOut = FALSE))
+    }
+  }
+  plumber::forward()
+}
+
+#* Throttle protected routes per client IP.
+#* @filter ratelimit
+function(req, res) {
+  if (RATE_LIMIT_PER_MINUTE > 0 && is_protected(req)) {
+    ip <- if (is.null(req$REMOTE_ADDR)) "unknown" else req$REMOTE_ADDR
+    now <- as.numeric(Sys.time())
+    entry <- if (exists(ip, envir = .rate_state, inherits = FALSE)) {
+      get(ip, envir = .rate_state)
+    } else {
+      NULL
+    }
+
+    if (is.null(entry) || now - entry$window_start >= 60) {
+      entry <- list(window_start = now, count = 0L)
+    }
+    entry$count <- entry$count + 1L
+    assign(ip, entry, envir = .rate_state)
+
+    if (entry$count > RATE_LIMIT_PER_MINUTE) {
+      res$status <- 429
+      return(list(
+        stdout = "", stderr = "", plots = list(),
+        error = "Rate limit exceeded. Try again shortly.", timedOut = FALSE
+      ))
+    }
+  }
+  plumber::forward()
+}
+
 #* @apiTitle R Mobile execution backend
 #* @apiDescription Runs a submitted R snippet in an isolated Rscript subprocess and
 #*   returns its stdout, stderr, and any plots it produced. See README.md before

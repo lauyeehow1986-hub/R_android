@@ -1,0 +1,62 @@
+package com.rmobile.console.ui.settings
+
+import androidx.lifecycle.ViewModel
+import com.rmobile.console.data.ServiceLocator
+import com.rmobile.console.data.network.NetworkModule
+import com.rmobile.console.data.settings.BaseUrlValidator
+import com.rmobile.console.data.settings.SettingsStore
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+
+data class SettingsUiState(
+    val baseUrl: String = "",
+    val apiKey: String = "",
+    val defaultBaseUrl: String = "",
+    val urlError: String? = null,
+    val saved: Boolean = false,
+)
+
+class SettingsViewModel(
+    private val store: SettingsStore = ServiceLocator.settingsStore,
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(
+        SettingsUiState(
+            baseUrl = store.baseUrl,
+            apiKey = store.apiKey,
+            defaultBaseUrl = store.defaultBaseUrl,
+        ),
+    )
+    val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    fun onBaseUrlChanged(value: String) {
+        _uiState.update { it.copy(baseUrl = value, urlError = null, saved = false) }
+    }
+
+    fun onApiKeyChanged(value: String) {
+        _uiState.update { it.copy(apiKey = value, saved = false) }
+    }
+
+    fun resetToDefault() {
+        _uiState.update { it.copy(baseUrl = store.defaultBaseUrl, urlError = null, saved = false) }
+    }
+
+    /** Validates and persists settings, applying them to the network layer. */
+    fun save() {
+        val current = _uiState.value
+        val normalized = BaseUrlValidator.normalize(current.baseUrl)
+        if (normalized == null) {
+            _uiState.update { it.copy(urlError = "Enter a valid http(s) URL, e.g. http://192.168.1.5:8000/") }
+            return
+        }
+
+        val apiKey = current.apiKey.trim()
+        store.baseUrl = normalized
+        store.apiKey = apiKey
+        NetworkModule.updateConfig(normalized, apiKey)
+
+        _uiState.update { it.copy(baseUrl = normalized, apiKey = apiKey, urlError = null, saved = true) }
+    }
+}

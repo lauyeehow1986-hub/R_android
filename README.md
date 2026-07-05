@@ -20,14 +20,26 @@ together. See `backend/README.md` for backend-specific setup and — important
 2. Open the repo root in Android Studio (it's a standard Gradle project) and
    run the `app` module on an emulator. The emulator reaches the backend at
    `10.0.2.2:8000` by default — no config needed for local dev.
-3. On a physical device, point the app at your machine's LAN IP instead:
+3. On a physical device, point the app at your machine's LAN IP — either at
+   build time, or in the app's **Settings** screen at runtime (no rebuild):
    ```bash
    ./gradlew :app:installDebug -PrExecutionBaseUrl=http://192.168.1.23:8000/
    ```
 
-## Status
+## Features
 
-Early scaffold: a single-screen editor (write R, tap Run, see stdout/stderr
-and plots) and a minimal Plumber backend. Feature parity with the iOS app,
-package installation, snippet history, and syntax highlighting are not built
-yet.
+- Single-screen editor: write R, tap Run, see stdout/stderr and plots.
+- **R syntax highlighting** in the editor.
+- **Run history** (persisted) — reopen and restore past snippets.
+- **In-app Settings** — change the backend URL and API key at runtime.
+- Backend with optional **API-key auth** and **per-IP rate limiting**.
+
+Not built yet: package installation UI, multi-file projects, on-device
+execution, iOS-app feature parity.
+
+## Development
+
+- `./gradlew :app:testDebugUnitTest` — JVM unit tests (no device needed).
+- CI (`.github/workflows/android.yml`) runs the unit tests, Lint, and a debug
+  build on every push/PR — the Android SDK isn't available in every dev
+  environment, so CI is the source of truth for "does it build".

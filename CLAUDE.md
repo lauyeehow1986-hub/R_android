@@ -64,18 +64,36 @@ Retrofit client, not worth a framework yet):
 
 - `MainActivity.kt` → sets Compose content, wraps everything in
   `RConsoleTheme`.
-- `ui/editor/` — the one screen the app has today: `EditorScreen`
-  (Compose UI: code input, Run button, output panel with text + decoded
-  plot bitmaps) driven by `EditorViewModel` (`StateFlow<EditorUiState>`,
-  standard unidirectional-data-flow — mutate state via `ViewModel` methods,
-  never from the composable).
+- `MainActivity.kt` also hosts `AppRoot`, a two-state (`EDITOR`/`SETTINGS`)
+  in-app switch — deliberately no navigation library for two screens.
+- `ui/editor/` — the main screen: `EditorScreen` (Compose UI: code input with
+  R syntax highlighting, Run button, output panel with text + decoded plot
+  bitmaps, plus a run-history bottom sheet) driven by `EditorViewModel`
+  (`StateFlow<EditorUiState>`, standard unidirectional-data-flow — mutate state
+  via `ViewModel` methods, never from the composable). Syntax highlighting is
+  split into a pure tokenizer (`RSyntaxHighlighter`) and a Compose
+  `VisualTransformation` (`RCodeVisualTransformation`) so the tokenizer is
+  unit-testable.
+- `ui/settings/` — `SettingsScreen` + `SettingsViewModel` for editing the
+  backend URL and API key at runtime.
 - `data/` — `RExecutionRepository` wraps `RExecutionApi` (Retrofit
   interface) in a `Result`-returning suspend call. `data/network/NetworkModule`
   is the single hand-rolled DI point: one lazily-built OkHttp/Retrofit
-  instance, base URL from `BuildConfig.R_EXECUTION_BASE_URL`.
-- The backend base URL is a **build-time** value
-  (`app/build.gradle.kts` → `buildConfigField`, overridable with
-  `-PrExecutionBaseUrl=...`), not runtime-configurable in-app yet.
+  instance built against a placeholder base URL, with a
+  `HostSelectionInterceptor` that rewrites each request's host/scheme/port (and
+  path prefix) to the **runtime-configured** URL and attaches the optional
+  `X-API-Key` header — so changing the backend needs no rebuild.
+- `data/settings/` — `SettingsStore` (SharedPreferences) persists the backend
+  URL, API key, and run history; `BaseUrlValidator` is the pure, unit-tested
+  URL normalizer. `data/history/` holds the `HistoryEntry` model and
+  `RunHistory` (pure list logic). `data/ServiceLocator` is initialized once by
+  `RMobileApplication` and applies persisted settings to `NetworkModule` at
+  startup; the (context-less) ViewModels read it via default constructor args,
+  which is also the seam unit tests inject fakes through.
+- The **build-time** default backend URL still lives in
+  `app/build.gradle.kts` → `buildConfigField` (overridable with
+  `-PrExecutionBaseUrl=...`); it's the fallback until the user overrides it in
+  Settings.
 
 **Naming gotcha**: Android auto-generates a resource class literally named
 `R` (`com.rmobile.console.R`, holding `R.string`, `R.drawable`, etc.) in
@@ -96,10 +114,16 @@ existing iOS apps advertise), collects stdout/stderr and any
 `plot%03d.png` files (base64-encoded), and deletes the temp dir. `run.R` is
 just the Plumber bootstrap (`plumb("plumber.R")$run(...)`).
 
+`plumber.R` also has two Plumber filters (`auth`, `ratelimit`) that guard
+`/execute` only (health checks stay open): optional `X-API-Key` auth when
+`R_API_KEY` is set, and an in-process per-IP fixed-window rate limit when
+`R_RATE_LIMIT_PER_MINUTE > 0`. Both are **off by default** for local dev.
+
 The Dockerfile/`docker-compose.yml` run this as an unprivileged user with a
 read-only root filesystem, dropped capabilities, and CPU/memory limits —
 **this is still not a hardened multi-tenant sandbox** (no network egress
-restriction, no per-request container/VM isolation, no auth/rate-limiting).
+restriction, no per-request container/VM isolation; the rate limiter is a
+single-instance in-memory counter that trusts `REMOTE_ADDR`).
 Read `backend/README.md`'s security section in full before changing the
 execution model or deploying this anywhere reachable from the internet —
 this service is arbitrary-code-execution-as-a-feature by design, so changes
@@ -116,8 +140,13 @@ field on one side, add it on the other by hand.
 
 ## Current scope / what's deliberately not built yet
 
-This is an early scaffold, not a feature-complete port: one screen (write
-code, run, see output), no snippet history, no package installation UI, no
-syntax highlighting, no auth on the backend. Don't assume any of these
-exist when reasoning about the app — check `ui/editor/` and `backend/plumber.R`,
-which are still the entire feature set.
+Built so far: the editor screen (write code, run, see output) with R syntax
+highlighting and a persisted run-history sheet; a Settings screen for the
+backend URL + API key at runtime; JVM unit tests (`app/src/test/`) plus a
+GitHub Actions CI workflow; and optional API-key auth + per-IP rate limiting
+on the backend.
+
+Still **not** built — don't assume these exist: package-installation UI,
+multi-file projects, on-device execution, network-egress restriction or
+per-request VM isolation on the backend, and any backend automated test suite
+(validate `plumber.R` by hitting `/execute` with curl).

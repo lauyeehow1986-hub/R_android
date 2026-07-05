@@ -6,6 +6,11 @@ services:
     environment:
       R_EXECUTION_TIMEOUT_SECONDS: "20"
       R_MAX_CODE_LENGTH: "20000"
+      # Auth + rate limiting are OFF by default for local dev. Set a key and a
+      # per-IP/minute cap before exposing this beyond your own machine. The
+      # Android app sends the key via its Settings screen (X-API-Key header).
+      R_API_KEY: "${R_API_KEY:-}"
+      R_RATE_LIMIT_PER_MINUTE: "${R_RATE_LIMIT_PER_MINUTE:-0}"
     # Defense-in-depth for an inherently risky service (arbitrary code execution).
     # None of this replaces real sandboxing before exposing the service publicly
     # -- see README.md.
