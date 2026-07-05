@@ -53,10 +53,14 @@ by the exec timeout).
   with a hard timeout of `R_INSTALL_TIMEOUT_SECONDS` (default `300`). `<repo>` is
   `R_CRAN_REPO` (default a Posit Package Manager URL for fast binary installs on
   the image's platform).
-- Response: `{ stdout, stderr, error, timedOut, installed }`, where `installed`
-  is the result of checking `requireNamespace("<pkg>")` in the shared lib after
-  the run (so a warning-only "package not available" reports `installed:false`
-  with a non-null `error`). Unboxed JSON like the other endpoints.
+- Response: `{ stdout, stderr, error, timedOut, installed, systemRequirements }`,
+  where `installed` is the result of checking `requireNamespace("<pkg>")` in the
+  shared lib after the run (so a warning-only "package not available" reports
+  `installed:false` with a non-null `error`). On failure, `systemRequirements`
+  is a best-effort string of the apt commands the package needs, from
+  `remotes::system_requirements("ubuntu", "22.04", package = "<pkg>")` (empty
+  when none/unknown) — this is the "surface the exact apt command" path for a
+  package whose system lib isn't pre-baked. Unboxed JSON like the other endpoints.
 - Guarded by the existing `auth` + `ratelimit` filters (via `is_protected()` —
   add `/install`): it is RCE + resource-heavy.
 
@@ -69,14 +73,19 @@ by the exec timeout).
 ### Config summary (env)
 - `R_PKG_LIB` (default `/data/rlib`)
 - `R_INSTALL_TIMEOUT_SECONDS` (default `300`)
-- `R_CRAN_REPO` (default Posit binary repo)
+- `R_CRAN_REPO` (default the Posit Package Manager **binary** repo for the image's
+  distro — `https://packagemanager.posit.co/cran/__linux__/jammy/latest` for the
+  `rocker/r-ver:4.4.1` (Ubuntu 22.04) base; operators on a different base image
+  set this to match). Binary packages mean no compilation for most installs.
 
 ## App design
 
 - **Models** (`ExecuteModels.kt` or a new `PackageModels.kt`):
   - `InstallRequest(package: String, sessionId: String? = null)`
-  - `InstallResponse(stdout, stderr, error, timedOut, installed)` (all defaulted;
-    `installed: Boolean = false`)
+  - `InstallResponse(stdout, stderr, error, timedOut, installed, systemRequirements)`
+    (all defaulted; `installed: Boolean = false`,
+    `systemRequirements: String? = null`). The Packages screen shows
+    `systemRequirements` when present ("this package needs: …").
   - `PackagesResponse(packages: List<String> = emptyList())`
   - Note: `package` is a Kotlin soft keyword; the property is fine but the JSON
     key must be `package` — use `@SerialName("package")` on a differently-named
@@ -99,7 +108,18 @@ by the exec timeout).
 - `docker-compose.yml`: add volume `r_rlib:/data/rlib` to the service and to the
   top-level `volumes:`; add `R_PKG_LIB`, `R_INSTALL_TIMEOUT_SECONDS`,
   `R_CRAN_REPO` env.
-- `Dockerfile`: `RUN mkdir -p /data/rlib && chown -R rexec:rexec /data/rlib`.
+- `Dockerfile`:
+  - `RUN mkdir -p /data/rlib && chown -R rexec:rexec /data/rlib`.
+  - **Pre-bake common R-package system libraries** (build-time `apt-get`, so no
+    runtime apt is ever needed — the container stays non-root + read-only-root):
+    `libxml2-dev`, `libfontconfig1-dev`, `libharfbuzz-dev`, `libfribidi-dev`,
+    `libfreetype6-dev`, `libpng-dev`, `libjpeg-dev`, `libtiff5-dev`,
+    `libgit2-dev`, `libssh2-1-dev`, `libicu-dev`, `zlib1g-dev`
+    (added to the existing `libsodium-dev`; `libcurl4-openssl-dev`/`libssl-dev`
+    are already needed and included). Combined with binary installs, this covers
+    the common tidyverse/devtools ecosystem.
+  - Add `remotes` to the image's `install2.r` package list (used by `/install`
+    to report system requirements on failure).
 
 ## Testing
 
@@ -114,10 +134,14 @@ by the exec timeout).
     `local_server(env = list(R_PKG_LIB = <existing tempdir>))`); the wrapper's
     default `/data/rlib` only exists in the real container.
   - `/install` is auth-protected (401 without key when `R_API_KEY` set).
-  - **No real network install in CI** (slow/flaky). The real install→use happy
-    path (e.g. install a small pure-R package, then `library()` it in `/execute`)
-    is verified once manually in the local Docker image during implementation and
-    documented as a manual check in `backend/README.md`.
+  - **Real install happy path in CI**: `POST /install` with `praise` (a tiny,
+    pure-R, zero-dependency package — installs fast from any repo, no
+    compilation) → `installed:true`; then an `/execute` run of
+    `library(praise); cat(is.character(praise()))` → `"TRUE"`, proving the full
+    install→persist→use path. Runs in both the local Docker suite and CI (both
+    have network). This test points `R_CRAN_REPO` at a source CRAN mirror
+    (`https://cloud.r-project.org`) so it's independent of the runner's distro
+    (pure-R packages install identically from source).
 - **App**: `PackagesViewModel` unit tests — list load, install success (updates
   state + refreshes list), install failure (surfaces error) — with a fake API.
 - **Docs**: `backend/README.md` (new endpoints, shared library, the
@@ -128,8 +152,11 @@ by the exec timeout).
 
 - Uninstalling packages (no `remove.packages` endpoint/UI).
 - Per-session libraries; disk quota / eviction for the shared lib.
-- Installing system (apt) dependencies; source packages that need absent system
-  libraries will fail (documented).
+- **Runtime** system-dependency installation. Common system libraries are
+  pre-baked into the image (above), so most popular packages work; a package
+  needing a system lib that wasn't pre-baked still fails, but `/install` returns
+  the apt command to add it (rebuild the image). No runtime apt (keeps the
+  container hardened).
 - Version pinning / specific-version installs.
 
 ## Security notes (extend `backend/README.md`)
