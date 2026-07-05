@@ -145,6 +145,14 @@ vectors serialize as scalars (matching the Kotlin models) and NULL becomes
 JSON null — without this, plumber array-wraps every scalar and the app can't
 parse responses.
 
+**Packages**: the wrapper also prepends a shared library `R_PKG_LIB` (default
+`/data/rlib`, its own read-write named volume) to `.libPaths()`, so `library()`
+and inline `install.packages()` see installed packages. `POST /install` (body
+`{"package"}`, name-validated, its own `R_INSTALL_TIMEOUT_SECONDS`) installs into
+that lib in an isolated subprocess and reports `installed`/`systemRequirements`;
+`GET /packages` lists them. Common package system libraries are pre-baked into
+the image (no runtime apt — the container stays hardened).
+
 The Dockerfile/`docker-compose.yml` run this as an unprivileged user with a
 read-only root filesystem, dropped capabilities, and CPU/memory limits —
 **this is still not a hardened multi-tenant sandbox** (no network egress
@@ -162,10 +170,14 @@ here have different stakes than changes to the Android UI.
 (kotlinx.serialization) must stay in sync field-for-field with the JSON
 returned by `plumber.R`. `/execute`: request `code` + optional `sessionId`;
 response `stdout`, `stderr`, `plots`, `error`, `timedOut`, `workspaceObjects`
-(nullable). `/reset`: request `sessionId`, response `ok`. There's no shared
-schema file — if you add a field on one side, add it on the other by hand, and
-remember the backend must emit **unboxed** JSON (see `run.R`) or scalar fields
-won't deserialize.
+(nullable). `/reset`: request `sessionId`, response `ok`. `/install`
+(`InstallRequest`/`InstallResponse`, in `data/model/PackageModels.kt`): request
+`package` (Kotlin property `packageName` via `@SerialName("package")`), response
+`stdout`/`stderr`/`error`/`timedOut`/`installed`/`systemRequirements`.
+`/packages` → `PackagesResponse(packages)`. There's no shared schema file — if
+you add a field on one side, add it on the other by hand, and remember the
+backend must emit **unboxed** JSON (see `run.R`) or scalar fields won't
+deserialize.
 
 ## Current scope / what's deliberately not built yet
 
@@ -173,10 +185,12 @@ Built so far: the editor screen (write code, run, see output) with R syntax
 highlighting, a quick-insert operator bar, named saved scripts, and a persisted
 run-history sheet; a Settings screen for the backend URL + API key at runtime;
 clipboard/plot sharing; a **durable R session** (workspace + attached packages
-persist across runs/restarts, with a workspace summary and a reset action); JVM
-unit tests (`app/src/test/`) plus a GitHub Actions CI workflow; and optional
-API-key auth + per-IP rate limiting on the backend.
+persist across runs/restarts, with a workspace summary and a reset action);
+**CRAN package installation** (a Packages screen + `/install`/`/packages`, into
+a shared persistent library); JVM unit tests (`app/src/test/`) and backend
+integration tests (`backend/tests/`, testthat) plus GitHub Actions CI; and
+optional API-key auth + per-IP rate limiting on the backend.
 
-Still **not** built — don't assume these exist: package-installation UI,
-multi-file projects, on-device execution, and network-egress restriction or
-per-request VM isolation on the backend.
+Still **not** built — don't assume these exist: multi-file projects, on-device
+execution, and network-egress restriction or per-request VM isolation on the
+backend.
