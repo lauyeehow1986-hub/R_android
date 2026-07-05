@@ -38,7 +38,7 @@ session_paths <- function(session_id) {
 }
 
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) identical(req$PATH_INFO, "/execute")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -180,6 +180,16 @@ function(req, res) {
     timedOut = FALSE,
     workspaceObjects = workspace_objects
   )
+}
+
+#* Reset a session's persisted workspace + attached-package state
+#* @post /reset
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  session_id <- sanitize_session_id(body$sessionId)
+  paths <- session_paths(session_id)
+  unlink(c(paths$workspace, paths$attached), force = TRUE)
+  list(ok = TRUE)
 }
 
 #* Health check
