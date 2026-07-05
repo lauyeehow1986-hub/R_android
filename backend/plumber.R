@@ -149,7 +149,7 @@ function(req, res) {
       timeout = EXECUTION_TIMEOUT_SECONDS,
       error_on_status = FALSE
     ),
-    error = function(e) e,
+    error = function(e) e
   )
 
   if (inherits(result, "error")) {
@@ -163,7 +163,7 @@ function(req, res) {
       } else {
         "Execution failed to start."
       },
-      timedOut = timed_out,
+      timedOut = timed_out
     ))
   }
 
