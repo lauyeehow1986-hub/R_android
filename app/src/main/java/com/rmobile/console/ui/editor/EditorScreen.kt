@@ -89,6 +89,7 @@ private val quickInsertTokens = listOf(
 @Composable
 fun EditorScreen(
     onOpenSettings: () -> Unit,
+    onOpenPackages: () -> Unit,
     viewModel: EditorViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -152,6 +153,13 @@ fun EditorScreen(
                             onClick = {
                                 menuOpen = false
                                 showResetConfirm = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Packages") },
+                            onClick = {
+                                menuOpen = false
+                                onOpenPackages()
                             },
                         )
                     }
