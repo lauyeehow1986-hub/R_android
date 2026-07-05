@@ -37,6 +37,11 @@ session_paths <- function(session_id) {
   )
 }
 
+# Shared, persistent package library (its own volume in prod).
+PKG_LIB <- Sys.getenv("R_PKG_LIB", "/data/rlib")
+INSTALL_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_INSTALL_TIMEOUT_SECONDS", "300"))
+CRAN_REPO <- Sys.getenv("R_CRAN_REPO", "https://packagemanager.posit.co/cran/__linux__/jammy/latest")
+
 # Only the execution endpoint is protected; /health stays open for probes.
 is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset")
 
@@ -122,6 +127,7 @@ function(req, res) {
   # Before user code: restore the saved workspace + attached packages (if any).
   # After user code: persist workspace + attached-package list back to the session dir.
   wrapped <- c(
+    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(PKG_LIB)),
     sprintf(
       'tryCatch(if (file.exists(%s)) load(%s, envir = globalenv()), error = function(e) try(file.rename(%s, %s), silent = TRUE))',
       shQuote(paths$workspace), shQuote(paths$workspace),
@@ -196,4 +202,12 @@ function(req, res) {
 #* @get /health
 function() {
   list(status = "ok")
+}
+
+#* List user-installed packages in the shared library
+#* @get /packages
+function() {
+  pkgs <- tryCatch(rownames(installed.packages(lib.loc = PKG_LIB)), error = function(e) NULL)
+  if (is.null(pkgs)) pkgs <- character(0)
+  list(packages = as.list(pkgs))
 }
