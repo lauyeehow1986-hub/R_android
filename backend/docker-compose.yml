@@ -12,6 +12,9 @@ services:
       R_API_KEY: "${R_API_KEY:-}"
       R_RATE_LIMIT_PER_MINUTE: "${R_RATE_LIMIT_PER_MINUTE:-0}"
       R_SESSION_DIR: "/data/sessions"
+      R_PKG_LIB: "/data/rlib"
+      R_INSTALL_TIMEOUT_SECONDS: "300"
+      R_CRAN_REPO: "${R_CRAN_REPO:-https://packagemanager.posit.co/cran/__linux__/jammy/latest}"
     # Defense-in-depth for an inherently risky service (arbitrary code execution).
     # None of this replaces real sandboxing before exposing the service publicly
     # -- see README.md.
@@ -20,6 +23,7 @@ services:
       - /tmp
     volumes:
       - r_sessions:/data/sessions
+      - r_rlib:/data/rlib
     cap_drop:
       - ALL
     security_opt:
@@ -29,3 +33,4 @@ services:
 
 volumes:
   r_sessions:
+  r_rlib:

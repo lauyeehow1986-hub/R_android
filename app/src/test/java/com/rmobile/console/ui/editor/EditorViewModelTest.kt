@@ -5,6 +5,9 @@ import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.InstallRequest
+import com.rmobile.console.data.model.InstallResponse
+import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
 import com.rmobile.console.data.network.RExecutionApi
@@ -40,6 +43,8 @@ class EditorViewModelTest {
             resetError?.let { throw it }
             return resetResponse
         }
+        override suspend fun install(request: InstallRequest): InstallResponse = InstallResponse(installed = true)
+        override suspend fun packages(): PackagesResponse = PackagesResponse()
     }
 
     private class InMemoryHistoryStore(initial: List<HistoryEntry> = emptyList()) : HistoryStore {

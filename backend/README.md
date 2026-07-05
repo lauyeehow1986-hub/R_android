@@ -44,6 +44,12 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
 - `POST /reset` — body `{"sessionId": "default"}`, clears that session's saved
   workspace and attached-package list. Returns `{"ok": true}`. Same auth /
   rate-limit rules as `/execute`.
+- `POST /install` — body `{"package":"<name>"}`, installs a CRAN package into
+  the shared library. Returns `{"stdout","stderr","error","timedOut",
+  "installed","systemRequirements"}`. Same auth / rate-limit rules as
+  `/execute`; its own timeout (`R_INSTALL_TIMEOUT_SECONDS`, default 300s).
+- `GET /packages` — lists user-installed packages in the shared library
+  (`{"packages":[...]}`). Read-only, no auth.
 - `GET /health` — liveness check (never requires auth).
 
 ## Durable sessions
@@ -54,6 +60,18 @@ named volume in `docker-compose.yml`). The wrapper restores them before each
 run and saves them after a **successful** run, so a failed or timed-out run
 never overwrites good state. Only data/objects and attached packages persist —
 connections, external pointers, and `options()` do not.
+
+## Packages
+
+`POST /install` (body `{"package":"<name>"}`) installs a CRAN package into a
+shared, persistent library (`R_PKG_LIB`, default `/data/rlib`, a named volume)
+with a longer timeout (`R_INSTALL_TIMEOUT_SECONDS`, default 300s) from
+`R_CRAN_REPO`. Installed packages are prepended to `.libPaths()` for every run,
+so `library()` (and inline `install.packages()`) work. `GET /packages` lists
+them. Common system libraries are baked into the image, so most popular packages
+install (as binaries, no compilation); a package needing an un-baked lib fails
+and `/install` returns the apt command to add it (rebuild the image) — there is
+no runtime apt, so the container stays non-root + read-only-root.
 
 ## Security — read this before deploying anywhere reachable from the internet
 
@@ -95,6 +113,10 @@ own dev machine:
   `REMOTE_ADDR`; behind a proxy you'd want it to read `X-Forwarded-For`.
 - **Disk quota isn't enforced** beyond the OS temp cleanup — a script that
   fills the tmpfs before its timeout fires could still cause problems.
+- **`/install` runs arbitrary package code** (same RCE surface as `/execute`)
+  and writes to a globally shared, unbounded library — a trojaned package
+  persists for all sessions. It is auth/rate-limited and the package name is
+  restricted to `^[A-Za-z0-9._]+$`.
 - **Session state is unbounded and attacker-writable.** Persisted workspaces
   can grow without limit and hold arbitrary user data; there is no per-session
   quota or eviction yet. The `sessionId` is sanitized to `[A-Za-z0-9_-]` — keep

@@ -12,6 +12,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.rmobile.console.ui.editor.EditorScreen
+import com.rmobile.console.ui.packages.PackagesScreen
 import com.rmobile.console.ui.settings.SettingsScreen
 import com.rmobile.console.ui.theme.RConsoleTheme
 
@@ -28,7 +29,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { EDITOR, SETTINGS }
+private enum class Screen { EDITOR, SETTINGS, PACKAGES }
 
 @Composable
 private fun AppRoot() {
@@ -37,7 +38,11 @@ private fun AppRoot() {
     var screen by rememberSaveable { mutableStateOf(Screen.EDITOR) }
 
     when (screen) {
-        Screen.EDITOR -> EditorScreen(onOpenSettings = { screen = Screen.SETTINGS })
+        Screen.EDITOR -> EditorScreen(
+            onOpenSettings = { screen = Screen.SETTINGS },
+            onOpenPackages = { screen = Screen.PACKAGES },
+        )
         Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.EDITOR })
+        Screen.PACKAGES -> PackagesScreen(onBack = { screen = Screen.EDITOR })
     }
 }
