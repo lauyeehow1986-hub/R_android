@@ -10,6 +10,7 @@ import com.rmobile.console.data.history.RunHistory
 import com.rmobile.console.data.model.ExecFile
 import com.rmobile.console.data.network.NetworkModule
 import com.rmobile.console.data.project.Project
+import com.rmobile.console.data.project.ProjectArchive
 import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
@@ -137,6 +138,26 @@ class EditorViewModel(
             } else {
                 state.copy(projects = remaining)
             }
+        }
+    }
+
+    /** Imports a project from a `.zip`'s bytes, adding it to the library and opening it. */
+    fun importProject(bytes: ByteArray, fallbackName: String) {
+        val imported = ProjectArchive.import(bytes, now(), now(), fallbackName)
+        if (imported == null) {
+            _uiState.update { it.copy(errorMessage = "Couldn't import — not a valid project zip.") }
+            return
+        }
+        val updated = ProjectOps.upsert(_uiState.value.projects, imported)
+        projectStore.persistProjects(updated)
+        projectStore.persistLastOpenProjectId(imported.id)
+        _uiState.update {
+            it.copy(
+                projects = updated,
+                project = imported,
+                code = ProjectOps.activeContent(imported),
+                errorMessage = null,
+            )
         }
     }
 
