@@ -3,9 +3,17 @@ package com.rmobile.console.data.model
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class ExecFile(
+    val name: String,
+    val content: String,
+)
+
+@Serializable
 data class ExecuteRequest(
-    val code: String,
+    val code: String? = null,
     val sessionId: String? = null,
+    val files: List<ExecFile>? = null,
+    val entryFile: String? = null,
 )
 
 @Serializable
