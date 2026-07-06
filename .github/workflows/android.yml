@@ -65,3 +65,36 @@ jobs:
 
       - name: Run backend integration tests
         run: Rscript backend/run-tests.R
+
+  hardened-egress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bring up the hardened stack
+        working-directory: backend
+        run: docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d --build
+
+      - name: Wait for health (via the proxy)
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8000/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "backend never became healthy"; exit 1
+
+      - name: Ingress works
+        run: curl -s http://localhost:8000/health | grep -q '"status":"ok"'
+
+      - name: Egress is blocked
+        run: |
+          out=$(curl -s -X POST http://localhost:8000/execute \
+            -H 'Content-Type: application/json' \
+            -d '{"code":"options(timeout=5); cat(tryCatch({ readLines(url(\"http://example.com\")); \"REACHED\" }, error = function(e) \"BLOCKED\"))"}')
+          echo "response: $out"
+          echo "$out" | grep -q '"stdout":"BLOCKED"'
+
+      - name: Tear down
+        if: always()
+        working-directory: backend
+        run: docker compose -f docker-compose.yml -f docker-compose.hardened.yml down -v
