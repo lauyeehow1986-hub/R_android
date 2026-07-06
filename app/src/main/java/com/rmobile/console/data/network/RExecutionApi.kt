@@ -7,6 +7,8 @@ import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
+import com.rmobile.console.data.model.UninstallRequest
+import com.rmobile.console.data.model.UninstallResponse
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -21,6 +23,9 @@ interface RExecutionApi {
 
     @POST("install")
     suspend fun install(@Body request: InstallRequest): InstallResponse
+
+    @POST("uninstall")
+    suspend fun uninstall(@Body request: UninstallRequest): UninstallResponse
 
     @GET("packages")
     suspend fun packages(): PackagesResponse

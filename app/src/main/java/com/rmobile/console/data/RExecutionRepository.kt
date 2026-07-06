@@ -8,6 +8,8 @@ import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
+import com.rmobile.console.data.model.UninstallRequest
+import com.rmobile.console.data.model.UninstallResponse
 import com.rmobile.console.data.network.RExecutionApi
 
 class RExecutionRepository(
@@ -28,6 +30,9 @@ class RExecutionRepository(
 
     suspend fun install(packageName: String): Result<InstallResponse> =
         runCatching { api.install(InstallRequest(packageName)) }
+
+    suspend fun uninstall(packageName: String): Result<UninstallResponse> =
+        runCatching { api.uninstall(UninstallRequest(packageName)) }
 
     suspend fun listPackages(): Result<PackagesResponse> =
         runCatching { api.packages() }

@@ -23,3 +23,15 @@ data class InstallResponse(
 data class PackagesResponse(
     val packages: List<String> = emptyList(),
 )
+
+@Serializable
+data class UninstallRequest(
+    // JSON key must be "package" (a Kotlin soft keyword), so the property is renamed.
+    @SerialName("package") val packageName: String,
+)
+
+@Serializable
+data class UninstallResponse(
+    val removed: Boolean = false,
+    val error: String? = null,
+)

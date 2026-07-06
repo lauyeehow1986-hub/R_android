@@ -65,4 +65,24 @@ class PackagesViewModel(
                 }
         }
     }
+
+    /** Uninstalls a package from the shared library, then refreshes the list. */
+    fun uninstall(packageName: String) {
+        viewModelScope.launch {
+            repository.uninstall(packageName)
+                .onSuccess { response ->
+                    if (response.removed) {
+                        _uiState.update { it.copy(isError = false, message = "Removed $packageName.") }
+                        refresh()
+                    } else {
+                        _uiState.update {
+                            it.copy(isError = true, message = response.error ?: "$packageName was not removed.")
+                        }
+                    }
+                }
+                .onFailure { throwable ->
+                    _uiState.update { it.copy(isError = true, message = throwable.message ?: "Uninstall failed.") }
+                }
+        }
+    }
 }

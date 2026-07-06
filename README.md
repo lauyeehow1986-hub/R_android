@@ -39,8 +39,8 @@ together. See `backend/README.md` for backend-specific setup and — important
 - **Durable R session** — variables and attached packages persist between runs
   and restarts; a workspace summary shows what's in scope, and "Reset session"
   clears it.
-- **CRAN package installation** — install packages that persist and load in
-  later runs, from a Packages screen.
+- **CRAN package management** — install packages that persist and load in
+  later runs, and uninstall them again, from a Packages screen.
 - **Multi-file projects** — named projects of `.R` files that `source()` each
   other; a file switcher with a pinned entry file, and a project library.
   Export/import a project as a `.zip` of its files (share-sheet / file picker).

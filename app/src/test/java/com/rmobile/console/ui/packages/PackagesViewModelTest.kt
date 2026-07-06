@@ -8,6 +8,8 @@ import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
+import com.rmobile.console.data.model.UninstallRequest
+import com.rmobile.console.data.model.UninstallResponse
 import com.rmobile.console.data.network.RExecutionApi
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,10 +30,12 @@ class PackagesViewModelTest {
     private class FakeApi(
         var packagesResponse: PackagesResponse = PackagesResponse(),
         var installResponse: InstallResponse = InstallResponse(installed = true),
+        var uninstallResponse: UninstallResponse = UninstallResponse(removed = true),
     ) : RExecutionApi {
         override suspend fun execute(request: ExecuteRequest): ExecuteResponse = ExecuteResponse()
         override suspend fun reset(request: ResetRequest): ResetResponse = ResetResponse(ok = true)
         override suspend fun install(request: InstallRequest): InstallResponse = installResponse
+        override suspend fun uninstall(request: UninstallRequest): UninstallResponse = uninstallResponse
         override suspend fun packages(): PackagesResponse = packagesResponse
     }
 
@@ -75,5 +79,35 @@ class PackagesViewModelTest {
         val s = vm.uiState.value
         assertTrue(s.isError)
         assertTrue(s.message!!.contains("not available"))
+    }
+
+    @Test
+    fun `uninstall removes the package and refreshes the list`() = runTest {
+        val api = FakeApi(
+            packagesResponse = PackagesResponse(listOf("praise")),
+            uninstallResponse = UninstallResponse(removed = true),
+        )
+        val vm = viewModel(api)
+        advanceUntilIdle()
+        api.packagesResponse = PackagesResponse(emptyList())
+        vm.uninstall("praise")
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        assertFalse(s.isError)
+        assertTrue(s.message!!.contains("praise"))
+        assertTrue(s.installed.isEmpty())
+    }
+
+    @Test
+    fun `uninstall that removed nothing surfaces an error`() = runTest {
+        val vm = viewModel(FakeApi(uninstallResponse = UninstallResponse(removed = false, error = "not there")))
+        advanceUntilIdle()
+        vm.uninstall("ghost")
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        assertTrue(s.isError)
+        assertTrue(s.message!!.contains("not there"))
     }
 }

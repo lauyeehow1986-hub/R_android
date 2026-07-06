@@ -10,6 +10,8 @@ import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
+import com.rmobile.console.data.model.UninstallRequest
+import com.rmobile.console.data.model.UninstallResponse
 import com.rmobile.console.data.network.RExecutionApi
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectArchive
@@ -46,6 +48,7 @@ class EditorViewModelTest {
         }
         override suspend fun reset(request: ResetRequest): ResetResponse = ResetResponse(ok = true)
         override suspend fun install(request: InstallRequest): InstallResponse = InstallResponse(installed = true)
+        override suspend fun uninstall(request: UninstallRequest): UninstallResponse = UninstallResponse(removed = true)
         override suspend fun packages(): PackagesResponse = PackagesResponse()
     }
 
