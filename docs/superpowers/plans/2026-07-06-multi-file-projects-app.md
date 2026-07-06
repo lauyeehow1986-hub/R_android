@@ -833,7 +833,8 @@ class EditorViewModelTest {
     fun `setEntry changes which file runs`() = runTest {
         val api = FakeApi()
         val vm = viewModel(api = api)
-        vm.addFile("helpers.R")
+        vm.addFile("helpers.R")            // helpers.R is now active (and empty)
+        vm.onCodeChanged("cat(2)")         // give the new entry non-blank content (runCode guards blank entries)
         vm.setEntry("helpers.R")
         vm.runCode()
         advanceUntilIdle()
