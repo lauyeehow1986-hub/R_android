@@ -1,0 +1,34 @@
+# Hardened profile — apply as an override on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d --build
+#
+# The execution container gets NO network egress: r-execution runs only on an
+# `internal` network (no route to the internet), and a Caddy reverse proxy on a
+# separate edge network provides ingress. Submitted R code therefore cannot
+# reach cloud-metadata / internal services / the internet.
+services:
+  r-execution:
+    # Remove the published port from the base file — ingress comes via the proxy.
+    ports: !override []
+    # Only on the internal (no-egress) network.
+    networks:
+      - execnet
+    # Cap the scratch filesystem so a run can't fill it.
+    tmpfs: !override
+      - /tmp:size=64m
+
+  proxy:
+    image: caddy:2-alpine
+    depends_on:
+      - r-execution
+    ports:
+      - "8000:8000"
+    networks:
+      - edge
+      - execnet
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+networks:
+  edge:
+  execnet:
+    internal: true
