@@ -13,6 +13,13 @@ RUN install2.r --error --skipmissing \
     jsonlite \
     remotes
 
+# Bake any packages declared in packages.txt at build time (the build has
+# network; the hardened runtime has none). Empty manifest => no-op.
+COPY packages.txt /tmp/packages.txt
+RUN pkgs="$(grep -vE '^[[:space:]]*#|^[[:space:]]*$' /tmp/packages.txt || true)"; \
+    if [ -n "$pkgs" ]; then install2.r --error --skipmissing $pkgs; fi; \
+    rm -f /tmp/packages.txt
+
 RUN useradd --create-home --shell /bin/bash rexec
 RUN mkdir -p /data/sessions /data/rlib && chown -R rexec:rexec /data
 WORKDIR /home/rexec/app
