@@ -80,4 +80,34 @@ class PackagesViewModelTest {
         assertTrue(s.isError)
         assertTrue(s.message!!.contains("not available"))
     }
+
+    @Test
+    fun `uninstall removes the package and refreshes the list`() = runTest {
+        val api = FakeApi(
+            packagesResponse = PackagesResponse(listOf("praise")),
+            uninstallResponse = UninstallResponse(removed = true),
+        )
+        val vm = viewModel(api)
+        advanceUntilIdle()
+        api.packagesResponse = PackagesResponse(emptyList())
+        vm.uninstall("praise")
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        assertFalse(s.isError)
+        assertTrue(s.message!!.contains("praise"))
+        assertTrue(s.installed.isEmpty())
+    }
+
+    @Test
+    fun `uninstall that removed nothing surfaces an error`() = runTest {
+        val vm = viewModel(FakeApi(uninstallResponse = UninstallResponse(removed = false, error = "not there")))
+        advanceUntilIdle()
+        vm.uninstall("ghost")
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        assertTrue(s.isError)
+        assertTrue(s.message!!.contains("not there"))
+    }
 }
