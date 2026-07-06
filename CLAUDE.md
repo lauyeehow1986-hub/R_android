@@ -95,12 +95,21 @@ Retrofit client, not worth a framework yet):
   path prefix) to the **runtime-configured** URL and attaches the optional
   `X-API-Key` header — so changing the backend needs no rebuild.
 - `data/settings/` — `SettingsStore` (SharedPreferences) persists the backend
-  URL, API key, and run history; `BaseUrlValidator` is the pure, unit-tested
-  URL normalizer. `data/history/` holds the `HistoryEntry` model and
-  `RunHistory` (pure list logic). `data/ServiceLocator` is initialized once by
-  `RMobileApplication` and applies persisted settings to `NetworkModule` at
-  startup; the (context-less) ViewModels read it via default constructor args,
-  which is also the seam unit tests inject fakes through.
+  URL, API key, run history, saved scripts, and **projects**; `BaseUrlValidator`
+  is the pure, unit-tested URL normalizer. `data/history/` holds the
+  `HistoryEntry` model and `RunHistory` (pure list logic). `data/ServiceLocator`
+  is initialized once by `RMobileApplication` and applies persisted settings to
+  `NetworkModule` at startup; the (context-less) ViewModels read it via default
+  constructor args, which is also the seam unit tests inject fakes through.
+- `data/project/` — **multi-file projects**: `Project`/`ProjectFile` models,
+  pure unit-tested `ProjectOps` (file/project list ops), and the `ProjectStore`
+  interface (implemented by `SettingsStore`). `EditorViewModel` is project-aware
+  — `uiState.code` mirrors the *active* file's content (so the editor field is
+  unchanged), and Run sends `files` + `entryFile = project.entryFileName` (the
+  pinned entry, not the focused file). `ui/editor/EditorScreen` gained a file
+  switcher (entry badge ▶, set-entry/rename/delete), and `ui/projects/ProjectsScreen`
+  is the project library — it shares the one `EditorViewModel` hoisted in
+  `MainActivity.AppRoot`, so opening a project updates the editor.
 - The **build-time** default backend URL still lives in
   `app/build.gradle.kts` → `buildConfigField` (overridable with
   `-PrExecutionBaseUrl=...`); it's the fallback until the user overrides it in
@@ -198,6 +207,9 @@ a shared persistent library); JVM unit tests (`app/src/test/`) and backend
 integration tests (`backend/tests/`, testthat) plus GitHub Actions CI; and
 optional API-key auth + per-IP rate limiting on the backend.
 
-Still **not** built — don't assume these exist: multi-file projects, on-device
-execution, and network-egress restriction or per-request VM isolation on the
-backend.
+Also built: **CRAN package installation** (Packages screen + `/install`) and
+**multi-file projects** (named projects of `.R` files with a file switcher and a
+pinned entry, a project library, and `files`/`entryFile` execution).
+
+Still **not** built — don't assume these exist: on-device execution, and
+network-egress restriction or per-request VM isolation on the backend.
