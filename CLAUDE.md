@@ -109,7 +109,11 @@ Retrofit client, not worth a framework yet):
   pinned entry, not the focused file). `ui/editor/EditorScreen` gained a file
   switcher (entry badge ▶, set-entry/rename/delete), and `ui/projects/ProjectsScreen`
   is the project library — it shares the one `EditorViewModel` hoisted in
-  `MainActivity.AppRoot`, so opening a project updates the editor.
+  `MainActivity.AppRoot`, so opening a project updates the editor. Projects
+  export/import as a `.zip` of their `.R` files + a `.rmobile-project.json`
+  manifest via the pure, tested `ProjectArchive`; `ProjectsScreen` exports through
+  the share-sheet (`shareProjectZip`) and imports via a SAF picker →
+  `EditorViewModel.importProject` (imports create a new project).
 - The **build-time** default backend URL still lives in
   `app/build.gradle.kts` → `buildConfigField` (overridable with
   `-PrExecutionBaseUrl=...`); it's the fallback until the user overrides it in

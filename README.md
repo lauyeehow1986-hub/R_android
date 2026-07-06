@@ -43,6 +43,7 @@ together. See `backend/README.md` for backend-specific setup and — important
   later runs, from a Packages screen.
 - **Multi-file projects** — named projects of `.R` files that `source()` each
   other; a file switcher with a pinned entry file, and a project library.
+  Export/import a project as a `.zip` of its files (share-sheet / file picker).
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
