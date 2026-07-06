@@ -52,6 +52,12 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
   the shared library. Returns `{"stdout","stderr","error","timedOut",
   "installed","systemRequirements"}`. Same auth / rate-limit rules as
   `/execute`; its own timeout (`R_INSTALL_TIMEOUT_SECONDS`, default 300s).
+- `POST /uninstall` — body `{"package":"<name>"}`, removes a package from the
+  shared library. Returns `{"removed","error"}` (`removed:true` only when the
+  package was present and is now gone; `removed:false` with no error for a
+  package that wasn't installed there). Same auth / rate-limit rules as
+  `/execute`. Only the writable `R_PKG_LIB` is touched — base and pre-baked
+  image packages are unaffected.
 - `GET /packages` — lists user-installed packages in the shared library
   (`{"packages":[...]}`). Read-only, no auth.
 - `GET /health` — liveness check (never requires auth).
@@ -72,7 +78,9 @@ shared, persistent library (`R_PKG_LIB`, default `/data/rlib`, a named volume)
 with a longer timeout (`R_INSTALL_TIMEOUT_SECONDS`, default 300s) from
 `R_CRAN_REPO`. Installed packages are prepended to `.libPaths()` for every run,
 so `library()` (and inline `install.packages()`) work. `GET /packages` lists
-them. Common system libraries are baked into the image, so most popular packages
+them, and `POST /uninstall` (body `{"package":"<name>"}`) removes one from the
+shared library (base and pre-baked image packages are untouched). Common system
+libraries are baked into the image, so most popular packages
 install (as binaries, no compilation); a package needing an un-baked lib fails
 and `/install` returns the apt command to add it (rebuild the image) — there is
 no runtime apt, so the container stays non-root + read-only-root.

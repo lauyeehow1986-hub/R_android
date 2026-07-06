@@ -198,7 +198,11 @@ request `sessionId`, response `ok`. `/install`
 (`InstallRequest`/`InstallResponse`, in `data/model/PackageModels.kt`): request
 `package` (Kotlin property `packageName` via `@SerialName("package")`), response
 `stdout`/`stderr`/`error`/`timedOut`/`installed`/`systemRequirements`.
-`/packages` → `PackagesResponse(packages)`. There's no shared schema file — if
+`/uninstall` (`UninstallRequest`/`UninstallResponse`): request `package` (same
+`@SerialName` renaming), response `removed`/`error`. `/packages` →
+`PackagesResponse(packages)`. `/execute`, `/reset`, `/install`, and `/uninstall`
+are the auth/rate-limit-protected endpoints (`is_protected` in `plumber.R`).
+There's no shared schema file — if
 you add a field on one side, add it on the other by hand, and remember the
 backend must emit **unboxed** JSON (see `run.R`) or scalar fields won't
 deserialize.
@@ -210,8 +214,8 @@ highlighting, a quick-insert operator bar, named saved scripts, and a persisted
 run-history sheet; a Settings screen for the backend URL + API key at runtime;
 clipboard/plot sharing; a **durable R session** (workspace + attached packages
 persist across runs/restarts, with a workspace summary and a reset action);
-**CRAN package installation** (a Packages screen + `/install`/`/packages`, into
-a shared persistent library); JVM unit tests (`app/src/test/`) and backend
+**CRAN package installation and removal** (a Packages screen + `/install` /
+`/uninstall` / `/packages`, into a shared persistent library); JVM unit tests (`app/src/test/`) and backend
 integration tests (`backend/tests/`, testthat) plus GitHub Actions CI; and
 optional API-key auth + per-IP rate limiting on the backend.
 
