@@ -8,6 +8,8 @@ import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
+import com.rmobile.console.data.model.UninstallRequest
+import com.rmobile.console.data.model.UninstallResponse
 import com.rmobile.console.data.network.RExecutionApi
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,10 +30,12 @@ class PackagesViewModelTest {
     private class FakeApi(
         var packagesResponse: PackagesResponse = PackagesResponse(),
         var installResponse: InstallResponse = InstallResponse(installed = true),
+        var uninstallResponse: UninstallResponse = UninstallResponse(removed = true),
     ) : RExecutionApi {
         override suspend fun execute(request: ExecuteRequest): ExecuteResponse = ExecuteResponse()
         override suspend fun reset(request: ResetRequest): ResetResponse = ResetResponse(ok = true)
         override suspend fun install(request: InstallRequest): InstallResponse = installResponse
+        override suspend fun uninstall(request: UninstallRequest): UninstallResponse = uninstallResponse
         override suspend fun packages(): PackagesResponse = packagesResponse
     }
 
