@@ -97,20 +97,55 @@ function(req, res) {
 #* @post /execute
 function(req, res) {
   body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
-  code <- body$code
+  files <- body$files
+  use_files <- !is.null(files)
 
-  if (is.null(code) || !is.character(code) || !nzchar(trimws(code))) {
-    res$status <- 400
-    return(list(stdout = "", stderr = "", plots = list(), error = "Missing 'code' in request body.", timedOut = FALSE))
-  }
-  if (nchar(code) > MAX_CODE_LENGTH) {
-    res$status <- 413
-    return(list(stdout = "", stderr = "", plots = list(), error = "Code exceeds the maximum allowed length.", timedOut = FALSE))
+  if (use_files) {
+    # jsonlite parses an array of {name,content} objects as a data.frame (or a
+    # list if not simplifiable); normalize both to character vectors.
+    if (is.data.frame(files)) {
+      file_names <- as.character(files$name)
+      file_contents <- as.character(files$content)
+    } else {
+      file_names <- vapply(files, function(f) as.character(f$name), character(1))
+      file_contents <- vapply(files, function(f) as.character(f$content), character(1))
+    }
+    entry <- body$entryFile
+    ok <- length(file_names) > 0 &&
+      all(grepl("^[A-Za-z0-9][A-Za-z0-9._-]*$", file_names)) &&
+      anyDuplicated(file_names) == 0 &&
+      is.character(entry) && length(entry) == 1 && entry %in% file_names
+    if (!isTRUE(ok)) {
+      res$status <- 400
+      return(list(stdout = "", stderr = "", plots = list(), error = "Invalid 'files' or 'entryFile'.", timedOut = FALSE))
+    }
+    if (sum(nchar(file_contents)) > MAX_CODE_LENGTH) {
+      res$status <- 413
+      return(list(stdout = "", stderr = "", plots = list(), error = "Project exceeds the maximum allowed size.", timedOut = FALSE))
+    }
+    body_line <- sprintf('source(%s, echo = FALSE, print.eval = TRUE)', shQuote(entry))
+  } else {
+    code <- body$code
+    if (is.null(code) || !is.character(code) || !nzchar(trimws(code))) {
+      res$status <- 400
+      return(list(stdout = "", stderr = "", plots = list(), error = "Missing 'code' in request body.", timedOut = FALSE))
+    }
+    if (nchar(code) > MAX_CODE_LENGTH) {
+      res$status <- 413
+      return(list(stdout = "", stderr = "", plots = list(), error = "Code exceeds the maximum allowed length.", timedOut = FALSE))
+    }
+    body_line <- code
   }
 
   run_dir <- file.path(tempdir(), paste0("run-", format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", sample.int(1e6, 1)))
   dir.create(run_dir, recursive = TRUE)
   on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
+
+  if (use_files) {
+    for (i in seq_along(file_names)) {
+      writeLines(file_contents[i], file.path(run_dir, file_names[i]))
+    }
+  }
 
   script_path <- file.path(run_dir, "script.R")
   plot_pattern <- file.path(run_dir, "plot%03d.png")
@@ -138,7 +173,7 @@ function(req, res) {
       shQuote(paths$attached), shQuote(paths$attached)
     ),
     sprintf('grDevices::png(filename = %s, width = 800, height = 600)', shQuote(plot_pattern)),
-    code,
+    body_line,
     'invisible(grDevices::dev.off())',
     sprintf('.saved <- try(save.image(%s), silent = TRUE)', shQuote(paths$workspace)),
     'if (inherits(.saved, "try-error")) message("Note: some objects could not be saved; workspace state was not updated.")',
