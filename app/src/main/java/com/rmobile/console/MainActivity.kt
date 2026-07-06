@@ -11,8 +11,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rmobile.console.ui.editor.EditorScreen
+import com.rmobile.console.ui.editor.EditorViewModel
 import com.rmobile.console.ui.packages.PackagesScreen
+import com.rmobile.console.ui.projects.ProjectsScreen
 import com.rmobile.console.ui.settings.SettingsScreen
 import com.rmobile.console.ui.theme.RConsoleTheme
 
@@ -29,20 +32,28 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { EDITOR, SETTINGS, PACKAGES }
+private enum class Screen { EDITOR, SETTINGS, PACKAGES, PROJECTS }
 
 @Composable
 private fun AppRoot() {
-    // Lightweight in-app navigation — the app has two screens, not enough to
-    // justify a navigation library.
+    // Lightweight in-app navigation — a small screen switch, not enough to
+    // justify a navigation library. One EditorViewModel is hoisted here so the
+    // editor and the project-library screen share the same project state.
     var screen by rememberSaveable { mutableStateOf(Screen.EDITOR) }
+    val editorViewModel: EditorViewModel = viewModel()
 
     when (screen) {
         Screen.EDITOR -> EditorScreen(
             onOpenSettings = { screen = Screen.SETTINGS },
             onOpenPackages = { screen = Screen.PACKAGES },
+            onOpenProjects = { screen = Screen.PROJECTS },
+            viewModel = editorViewModel,
         )
         Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.EDITOR })
         Screen.PACKAGES -> PackagesScreen(onBack = { screen = Screen.EDITOR })
+        Screen.PROJECTS -> ProjectsScreen(
+            viewModel = editorViewModel,
+            onOpenEditor = { screen = Screen.EDITOR },
+        )
     }
 }
