@@ -22,22 +22,26 @@ project files present so `source("helpers.R")` works.
 - **Multiple named projects** (a library), not a single working set.
 - **Editor becomes project-based** (not a separate screen); named "saved
   scripts" remain a separate single-snippet feature.
-- **Run executes the active file**, with all files written alongside for
-  `source()`.
+- **Run executes the project's pinned entry file** (each project designates one),
+  with all files written alongside for `source()`. You still edit/switch any
+  file freely; the entry is a per-project setting, not the focused file.
 
 ## Data model & persistence
 
 - `ProjectFile(name: String, content: String)` — one `.R` file.
-- `Project(id: Long, name: String, files: List<ProjectFile>, activeFileName: String, updatedAt: Long)`.
-  Invariants: `files` non-empty; `activeFileName` is one of `files`; file names
-  unique and match `^[A-Za-z0-9][A-Za-z0-9._-]*$` (must start with an
-  alphanumeric — this also excludes `.`/`..`; ending in `.R` recommended, not
-  enforced). A new project starts with a single `main.R` seeded with the sample
-  snippet.
+- `Project(id: Long, name: String, files: List<ProjectFile>, activeFileName: String, entryFileName: String, updatedAt: Long)`.
+  Invariants: `files` non-empty; `activeFileName` and `entryFileName` are each one
+  of `files`; file names unique and match `^[A-Za-z0-9][A-Za-z0-9._-]*$` (must
+  start with an alphanumeric — this also excludes `.`/`..`; ending in `.R`
+  recommended, not enforced). `activeFileName` is which file the editor shows;
+  `entryFileName` is which file Run executes. A new project starts with a single
+  `main.R` (both active and entry) seeded with the sample snippet.
 - Pure, unit-tested `ProjectOps` (no Android/persistence): `addFile`,
-  `renameFile`, `deleteFile` (rejects deleting the last file), `setActive`,
-  `updateActiveContent`, and project-list `upsert`/`delete` (sorted by
-  `updatedAt` desc). All return new immutable values.
+  `renameFile` (updates `activeFileName`/`entryFileName` if they referenced the
+  renamed file), `deleteFile` (rejects deleting the last file; reassigns
+  `activeFileName`/`entryFileName` to a remaining file if they pointed at the
+  deleted one), `setActive`, `setEntry`, `updateActiveContent`, and project-list
+  `upsert`/`delete` (sorted by `updatedAt` desc). All return new immutable values.
 - `ProjectStore` (interface; implemented by `SettingsStore` as JSON in
   SharedPreferences, like saved scripts): persists the project list **and** the
   last-open project id, so the app reopens the last project.
@@ -69,15 +73,18 @@ project files present so `source("helpers.R")` works.
 ## App (project-based editor)
 
 - `EditorViewModel` becomes project-aware: its state carries the current
-  `Project` (files + `activeFileName`) alongside the existing run/output/history/
-  workspace fields. The editor's text is the **active file's** content; typing
-  calls a `onActiveContentChanged` that updates that file via `ProjectOps`. Run
-  sends `files` + `entryFile = activeFileName` (with the current, possibly
-  unsaved, content of every file). Project changes persist through `ProjectStore`.
+  `Project` (files + `activeFileName` + `entryFileName`) alongside the existing
+  run/output/history/workspace fields. The editor's text is the **active file's**
+  content; typing calls `onActiveContentChanged` that updates that file via
+  `ProjectOps`. Run sends `files` + `entryFile = project.entryFileName` (with the
+  current, possibly unsaved, content of every file) — i.e. Run executes the
+  pinned entry regardless of which file is focused. Project changes persist
+  through `ProjectStore`.
 - **File switcher**: a horizontal scrollable row of file-name chips at the top of
-  the editor (tap to switch; active highlighted) with a `+` to add a file
-  (name dialog); rename/delete via a small per-file menu (delete disabled when
-  it's the last file).
+  the editor (tap to switch; active highlighted, the entry file marked with a
+  badge such as ▶) with a `+` to add a file (name dialog); a per-file menu offers
+  "Set as entry", rename, and delete (delete disabled when it's the last file).
+  The Run button labels the entry (e.g. "Run main.R") so it's clear what runs.
 - **Project library**: reached from the editor overflow menu ("Projects") → a
   screen (`ProjectsScreen` + `ProjectsViewModel`) listing projects (name +
   last-updated) with open / new / rename / delete. Opening switches the editor
@@ -101,12 +108,14 @@ project files present so `source("helpers.R")` works.
   - Session persistence works with `files` (a var set in one run is visible in
     the next).
 - **App** (JVM unit tests):
-  - `ProjectOps` pure tests (add/rename/delete/set-active/update-content, last-
-    file-delete guard, list upsert/delete/sort).
+  - `ProjectOps` pure tests (add/rename/delete/set-active/set-entry/update-
+    content, last-file-delete guard, delete/rename reassigns active+entry, list
+    upsert/delete/sort).
   - `ProjectStore` round-trip via an in-memory fake / serialization.
   - `EditorViewModel` project tests: switching files changes the edited content;
-    editing updates the active file; Run sends `files` + `entryFile`. Existing
-    `EditorViewModel` tests are refactored to the project model.
+    editing updates the active file; Run sends `files` + `entryFile =
+    entryFileName` (proven by running while a *non-entry* file is active).
+    Existing `EditorViewModel` tests are refactored to the project model.
 - **Docs**: `backend/README.md` (the `files`/`entryFile` contract), `CLAUDE.md`
   (project model, editor refactor, the new contract fields and screens).
 
