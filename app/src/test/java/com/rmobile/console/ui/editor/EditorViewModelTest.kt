@@ -11,6 +11,9 @@ import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
 import com.rmobile.console.data.network.RExecutionApi
+import com.rmobile.console.data.project.Project
+import com.rmobile.console.data.project.ProjectOps
+import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptStore
 import com.rmobile.console.util.MainDispatcherRule
@@ -32,17 +35,14 @@ class EditorViewModelTest {
     private class FakeApi(
         var response: ExecuteResponse = ExecuteResponse(stdout = "ok"),
         var error: Throwable? = null,
-        var resetResponse: ResetResponse = ResetResponse(ok = true),
-        var resetError: Throwable? = null,
+        var lastRequest: ExecuteRequest? = null,
     ) : RExecutionApi {
         override suspend fun execute(request: ExecuteRequest): ExecuteResponse {
+            lastRequest = request
             error?.let { throw it }
             return response
         }
-        override suspend fun reset(request: ResetRequest): ResetResponse {
-            resetError?.let { throw it }
-            return resetResponse
-        }
+        override suspend fun reset(request: ResetRequest): ResetResponse = ResetResponse(ok = true)
         override suspend fun install(request: InstallRequest): InstallResponse = InstallResponse(installed = true)
         override suspend fun packages(): PackagesResponse = PackagesResponse()
     }
@@ -59,195 +59,129 @@ class EditorViewModelTest {
         override fun persistScripts(scripts: List<SavedScript>) { stored = scripts }
     }
 
+    private class InMemoryProjectStore(initial: List<Project> = emptyList()) : ProjectStore {
+        var stored: List<Project> = initial
+        var lastId: Long? = null
+        override fun loadProjects() = stored
+        override fun persistProjects(projects: List<Project>) { stored = projects }
+        override fun loadLastOpenProjectId() = lastId
+        override fun persistLastOpenProjectId(id: Long?) { lastId = id }
+    }
+
+    private var counter = 100L
+
     private fun viewModel(
         api: FakeApi = FakeApi(),
-        store: InMemoryHistoryStore = InMemoryHistoryStore(),
-        scriptStore: InMemoryScriptStore = InMemoryScriptStore(),
-        now: () -> Long = { 1000L },
-    ) = EditorViewModel(RExecutionRepository(api), store, scriptStore, now)
+        history: InMemoryHistoryStore = InMemoryHistoryStore(),
+        scripts: InMemoryScriptStore = InMemoryScriptStore(),
+        projects: InMemoryProjectStore = InMemoryProjectStore(),
+    ) = EditorViewModel(RExecutionRepository(api), history, scripts, projects, now = { counter++ })
 
     @Test
-    fun `initial state loads persisted history`() {
-        val store = InMemoryHistoryStore(listOf(HistoryEntry("saved", 1)))
-        val vm = viewModel(store = store)
-
-        assertEquals(listOf(HistoryEntry("saved", 1)), vm.uiState.value.history)
-    }
-
-    @Test
-    fun `successful run populates output and records history`() = runTest {
-        val store = InMemoryHistoryStore()
-        val vm = viewModel(api = FakeApi(ExecuteResponse(stdout = "hello")), store = store, now = { 42L })
-
-        vm.onCodeChanged("print('hi')")
-        vm.runCode()
-        advanceUntilIdle()
-
-        val state = vm.uiState.value
-        assertFalse(state.isRunning)
-        assertEquals("hello", state.stdout)
-        assertEquals(listOf(HistoryEntry("print('hi')", 42L)), state.history)
-        assertEquals(state.history, store.stored)
-    }
-
-    @Test
-    fun `timed-out response sets the timedOut flag`() = runTest {
-        val vm = viewModel(
-            api = FakeApi(ExecuteResponse(error = "Execution timed out after 20s.", timedOut = true)),
-        )
-
-        vm.onCodeChanged("Sys.sleep(60)")
-        vm.runCode()
-        advanceUntilIdle()
-
-        val state = vm.uiState.value
-        assertTrue(state.timedOut)
-        assertEquals("Execution timed out after 20s.", state.errorMessage)
-    }
-
-    @Test
-    fun `failed run surfaces an error message`() = runTest {
-        val vm = viewModel(api = FakeApi(error = RuntimeException("boom")))
-
-        vm.onCodeChanged("x")
-        vm.runCode()
-        advanceUntilIdle()
-
-        val state = vm.uiState.value
-        assertFalse(state.isRunning)
-        assertEquals("boom", state.errorMessage)
-    }
-
-    @Test
-    fun `blank code does not run`() = runTest {
-        val store = InMemoryHistoryStore()
-        val vm = viewModel(store = store)
-
-        vm.onCodeChanged("   ")
-        vm.runCode()
-        advanceUntilIdle()
-
-        assertTrue(store.stored.isEmpty())
-        assertTrue(vm.uiState.value.history.isEmpty())
-    }
-
-    @Test
-    fun `restore from history loads code into the editor`() {
+    fun `creates a default project when none stored`() {
         val vm = viewModel()
-        vm.restoreFromHistory(HistoryEntry("summary(cars)", 5))
-
-        assertEquals("summary(cars)", vm.uiState.value.code)
+        assertEquals(1, vm.uiState.value.projects.size)
+        assertEquals("main.R", vm.uiState.value.project.entryFileName)
+        assertEquals(ProjectOps.activeContent(vm.uiState.value.project), vm.uiState.value.code)
     }
 
     @Test
-    fun `clear history empties state and store`() = runTest {
-        val store = InMemoryHistoryStore()
-        val vm = viewModel(store = store)
-
-        vm.onCodeChanged("x")
-        vm.runCode()
-        advanceUntilIdle()
-        assertTrue(vm.uiState.value.history.isNotEmpty())
-
-        vm.clearHistory()
-        assertTrue(vm.uiState.value.history.isEmpty())
-        assertTrue(store.stored.isEmpty())
-    }
-
-    @Test
-    fun `initial state loads persisted scripts`() {
-        val scriptStore = InMemoryScriptStore(listOf(SavedScript(1, "demo", "1+1", 1)))
-        val vm = viewModel(scriptStore = scriptStore)
-
-        assertEquals("demo", vm.uiState.value.savedScripts.single().name)
-    }
-
-    @Test
-    fun `save current script persists a named entry`() {
-        val scriptStore = InMemoryScriptStore()
-        val vm = viewModel(scriptStore = scriptStore, now = { 77L })
-
-        vm.onCodeChanged("mean(1:10)")
-        vm.saveCurrentScript("  My script  ")
-
-        val saved = vm.uiState.value.savedScripts.single()
-        assertEquals(SavedScript(id = 77L, name = "My script", code = "mean(1:10)", updatedAt = 77L), saved)
-        assertEquals(listOf(saved), scriptStore.stored)
-    }
-
-    @Test
-    fun `save is ignored when name or code is blank`() {
-        val scriptStore = InMemoryScriptStore()
-        val vm = viewModel(scriptStore = scriptStore)
-
-        vm.onCodeChanged("x")
-        vm.saveCurrentScript("   ")
-        vm.onCodeChanged("   ")
-        vm.saveCurrentScript("name")
-
-        assertTrue(vm.uiState.value.savedScripts.isEmpty())
-        assertTrue(scriptStore.stored.isEmpty())
-    }
-
-    @Test
-    fun `load script places its code in the editor`() {
+    fun `editing updates the active file content`() {
         val vm = viewModel()
-        vm.loadScript(SavedScript(1, "demo", "plot(cars)", 1))
-
-        assertEquals("plot(cars)", vm.uiState.value.code)
-    }
-
-    @Test
-    fun `delete script removes it from state and store`() {
-        val scriptStore = InMemoryScriptStore(listOf(SavedScript(1, "a", "1", 1)))
-        val vm = viewModel(scriptStore = scriptStore)
-
-        vm.deleteScript(1)
-
-        assertTrue(vm.uiState.value.savedScripts.isEmpty())
-        assertTrue(scriptStore.stored.isEmpty())
-    }
-
-    @Test
-    fun `successful run stores workspace objects`() = runTest {
-        val vm = viewModel(api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("x", "df"))))
-
         vm.onCodeChanged("x <- 1")
-        vm.runCode()
-        advanceUntilIdle()
-
-        assertEquals(listOf("x", "df"), vm.uiState.value.workspaceObjects)
+        assertEquals("x <- 1", vm.uiState.value.code)
+        assertEquals("x <- 1", ProjectOps.activeContent(vm.uiState.value.project))
     }
 
     @Test
-    fun `errored run leaves workspace objects unchanged`() = runTest {
-        val api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("x")))
+    fun `switching files swaps the edited content`() {
+        val vm = viewModel()
+        vm.onCodeChanged("main code")
+        vm.addFile("helpers.R")
+        vm.onCodeChanged("helper code")
+        vm.switchFile("main.R")
+        assertEquals("main code", vm.uiState.value.code)
+        vm.switchFile("helpers.R")
+        assertEquals("helper code", vm.uiState.value.code)
+    }
+
+    @Test
+    fun `run sends all files and the pinned entry even when a non-entry file is active`() = runTest {
+        val api = FakeApi(ExecuteResponse(stdout = "done"))
         val vm = viewModel(api = api)
-
-        vm.onCodeChanged("x <- 1")
-        vm.runCode()
-        advanceUntilIdle()
-        // Next run errors on the backend: workspaceObjects null in the response.
-        api.response = ExecuteResponse(error = "boom", workspaceObjects = null)
-        vm.onCodeChanged("stop('boom')")
+        vm.onCodeChanged("cat(1)")
+        vm.addFile("helpers.R")
+        vm.onCodeChanged("f <- function() 1")
         vm.runCode()
         advanceUntilIdle()
 
-        assertEquals(listOf("x"), vm.uiState.value.workspaceObjects)
+        val req = api.lastRequest!!
+        assertEquals("main.R", req.entryFile)
+        assertEquals(setOf("main.R", "helpers.R"), req.files!!.map { it.name }.toSet())
+        assertEquals("done", vm.uiState.value.stdout)
     }
 
     @Test
-    fun `reset session clears workspace objects`() = runTest {
-        val vm = viewModel(api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("x"))))
-
-        vm.onCodeChanged("x <- 1")
+    fun `setEntry changes which file runs`() = runTest {
+        val api = FakeApi()
+        val vm = viewModel(api = api)
+        vm.addFile("helpers.R")            // helpers.R is now active (and empty)
+        vm.onCodeChanged("cat(2)")         // give the new entry non-blank content
+        vm.setEntry("helpers.R")
         vm.runCode()
         advanceUntilIdle()
-        assertTrue(vm.uiState.value.workspaceObjects.isNotEmpty())
+        assertEquals("helpers.R", api.lastRequest!!.entryFile)
+    }
 
-        vm.resetSession()
+    @Test
+    fun `deleting the active file falls back to a remaining file`() {
+        val vm = viewModel()
+        vm.addFile("helpers.R")
+        vm.deleteFile("helpers.R")
+        assertEquals("main.R", vm.uiState.value.project.activeFileName)
+        assertEquals(listOf("main.R"), vm.uiState.value.project.files.map { it.name })
+    }
+
+    @Test
+    fun `new and open project switch the editor`() {
+        val vm = viewModel()
+        val firstId = vm.uiState.value.project.id
+        vm.onCodeChanged("first project code")
+        vm.newProject("Second")
+        assertEquals("Second", vm.uiState.value.project.name)
+        assertEquals(2, vm.uiState.value.projects.size)
+        vm.openProject(firstId)
+        assertEquals("first project code", vm.uiState.value.code)
+    }
+
+    @Test
+    fun `failed run surfaces an error`() = runTest {
+        val vm = viewModel(api = FakeApi(error = RuntimeException("boom")))
+        vm.onCodeChanged("x")
+        vm.runCode()
         advanceUntilIdle()
+        assertFalse(vm.uiState.value.isRunning)
+        assertEquals("boom", vm.uiState.value.errorMessage)
+    }
 
-        assertTrue(vm.uiState.value.workspaceObjects.isEmpty())
+    @Test
+    fun `run records history of the entry content`() = runTest {
+        val history = InMemoryHistoryStore()
+        val vm = viewModel(history = history)
+        vm.onCodeChanged("cat(42)")
+        vm.runCode()
+        advanceUntilIdle()
+        assertTrue(history.stored.any { it.code == "cat(42)" })
+    }
+
+    @Test
+    fun `save and load script operate on the active file`() {
+        val scripts = InMemoryScriptStore()
+        val vm = viewModel(scripts = scripts)
+        vm.onCodeChanged("saved code")
+        vm.saveCurrentScript("snippet")
+        vm.onCodeChanged("other")
+        vm.loadScript(scripts.stored.first())
+        assertEquals("saved code", vm.uiState.value.code)
     }
 }

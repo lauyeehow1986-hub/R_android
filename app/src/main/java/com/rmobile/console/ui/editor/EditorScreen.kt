@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
@@ -30,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -90,6 +93,7 @@ private val quickInsertTokens = listOf(
 fun EditorScreen(
     onOpenSettings: () -> Unit,
     onOpenPackages: () -> Unit,
+    onOpenProjects: () -> Unit = {},
     viewModel: EditorViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -98,6 +102,8 @@ fun EditorScreen(
     var showSaveDialog by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
+    var showAddFile by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<String?>(null) }
 
     // Local, cursor-aware editor state. Synced from uiState.code so history /
     // saved-script loads (which change code in the ViewModel) update the field.
@@ -162,6 +168,13 @@ fun EditorScreen(
                                 onOpenPackages()
                             },
                         )
+                        DropdownMenuItem(
+                            text = { Text("Projects") },
+                            onClick = {
+                                menuOpen = false
+                                onOpenProjects()
+                            },
+                        )
                     }
                 },
             )
@@ -174,6 +187,17 @@ fun EditorScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            FileSwitcher(
+                files = uiState.project.files.map { it.name },
+                activeFile = uiState.project.activeFileName,
+                entryFile = uiState.project.entryFileName,
+                onSwitch = viewModel::switchFile,
+                onAdd = { showAddFile = true },
+                onSetEntry = viewModel::setEntry,
+                onRename = { renameTarget = it },
+                onDelete = viewModel::deleteFile,
+            )
+
             OutlinedTextField(
                 value = field,
                 onValueChange = {
@@ -199,7 +223,7 @@ fun EditorScreen(
                 if (uiState.isRunning) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp))
                 } else {
-                    Text("Run")
+                    Text("Run ${uiState.project.entryFileName}")
                 }
             }
 
@@ -275,6 +299,29 @@ fun EditorScreen(
             dismissButton = {
                 TextButton(onClick = { showResetConfirm = false }) { Text("Cancel") }
             },
+        )
+    }
+
+    if (showAddFile) {
+        FileNameDialog(
+            title = "New file",
+            initial = "",
+            onConfirm = {
+                viewModel.addFile(it)
+                showAddFile = false
+            },
+            onDismiss = { showAddFile = false },
+        )
+    }
+    renameTarget?.let { target ->
+        FileNameDialog(
+            title = "Rename $target",
+            initial = target,
+            onConfirm = {
+                viewModel.renameFile(target, it)
+                renameTarget = null
+            },
+            onDismiss = { renameTarget = null },
         )
     }
 }
@@ -583,3 +630,79 @@ private fun decodeBase64Png(base64: String) = runCatching {
     val bytes = Base64.decode(base64, Base64.DEFAULT)
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 }.getOrNull()
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FileSwitcher(
+    files: List<String>,
+    activeFile: String,
+    entryFile: String,
+    onSwitch: (String) -> Unit,
+    onAdd: () -> Unit,
+    onSetEntry: (String) -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(files) { name ->
+            var menuOpen by remember { mutableStateOf(false) }
+            Column {
+                FilterChip(
+                    selected = name == activeFile,
+                    onClick = { onSwitch(name) },
+                    label = {
+                        Text(if (name == entryFile) "▶ $name" else name, fontFamily = FontFamily.Monospace)
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(20.dp)) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "File menu")
+                        }
+                    },
+                )
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Set as entry") }, onClick = { menuOpen = false; onSetEntry(name) })
+                    DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onRename(name) })
+                    DropdownMenuItem(
+                        text = { Text("Delete") },
+                        enabled = files.size > 1,
+                        onClick = { menuOpen = false; onDelete(name) },
+                    )
+                }
+            }
+        }
+        item {
+            IconButton(onClick = onAdd) {
+                Icon(Icons.Default.Add, contentDescription = "Add file")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileNameDialog(
+    title: String,
+    initial: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("File name (e.g. helpers.R)") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text("OK") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}

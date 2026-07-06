@@ -7,7 +7,11 @@ import com.rmobile.console.data.ServiceLocator
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.history.RunHistory
+import com.rmobile.console.data.model.ExecFile
 import com.rmobile.console.data.network.NetworkModule
+import com.rmobile.console.data.project.Project
+import com.rmobile.console.data.project.ProjectOps
+import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptLibrary
 import com.rmobile.console.data.scripts.SavedScriptStore
@@ -21,47 +25,141 @@ class EditorViewModel(
     private val repository: RExecutionRepository = RExecutionRepository(NetworkModule.rExecutionApi),
     private val historyStore: HistoryStore = ServiceLocator.settingsStore,
     private val scriptStore: SavedScriptStore = ServiceLocator.settingsStore,
+    private val projectStore: ProjectStore = ServiceLocator.settingsStore,
     private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(
-        EditorUiState(history = historyStore.load(), savedScripts = scriptStore.loadScripts()),
-    )
-    val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
+    private val _uiState: MutableStateFlow<EditorUiState>
+    val uiState: StateFlow<EditorUiState>
+
+    init {
+        val loaded = projectStore.loadProjects()
+        val projects = loaded.ifEmpty { listOf(ProjectOps.newProject(now(), "Untitled", now())) }
+        if (loaded.isEmpty()) projectStore.persistProjects(projects)
+        val lastId = projectStore.loadLastOpenProjectId()
+        val current = projects.firstOrNull { it.id == lastId } ?: projects.first()
+        _uiState = MutableStateFlow(
+            EditorUiState(
+                project = current,
+                projects = projects,
+                code = ProjectOps.activeContent(current),
+                history = historyStore.load(),
+                savedScripts = scriptStore.loadScripts(),
+            ),
+        )
+        uiState = _uiState.asStateFlow()
+    }
+
+    // --- editing ---
 
     fun onCodeChanged(code: String) {
-        _uiState.update { it.copy(code = code) }
+        val updated = ProjectOps.updateActiveContent(_uiState.value.project, code, now())
+        persistProject(updated)
+        _uiState.update { it.copy(project = updated, code = code) }
     }
 
-    /** Load a snippet from history back into the editor. */
-    fun restoreFromHistory(entry: HistoryEntry) {
-        _uiState.update { it.copy(code = entry.code) }
+    fun switchFile(name: String) {
+        val updated = ProjectOps.setActive(_uiState.value.project, name)
+        persistProject(updated)
+        _uiState.update { it.copy(project = updated, code = ProjectOps.activeContent(updated)) }
     }
+
+    fun addFile(name: String) {
+        val updated = ProjectOps.addFile(_uiState.value.project, name.trim(), now())
+        if (updated == null) {
+            _uiState.update { it.copy(errorMessage = "Invalid or duplicate file name.") }
+            return
+        }
+        persistProject(updated)
+        _uiState.update { it.copy(project = updated, code = ProjectOps.activeContent(updated), errorMessage = null) }
+    }
+
+    fun renameFile(oldName: String, newName: String) {
+        val updated = ProjectOps.renameFile(_uiState.value.project, oldName, newName.trim(), now())
+        if (updated == null) {
+            _uiState.update { it.copy(errorMessage = "Invalid or duplicate file name.") }
+            return
+        }
+        persistProject(updated)
+        _uiState.update { it.copy(project = updated, code = ProjectOps.activeContent(updated), errorMessage = null) }
+    }
+
+    fun deleteFile(name: String) {
+        val updated = ProjectOps.deleteFile(_uiState.value.project, name, now()) ?: return
+        persistProject(updated)
+        _uiState.update { it.copy(project = updated, code = ProjectOps.activeContent(updated)) }
+    }
+
+    fun setEntry(name: String) {
+        val updated = ProjectOps.setEntry(_uiState.value.project, name, now())
+        persistProject(updated)
+        _uiState.update { it.copy(project = updated) }
+    }
+
+    // --- projects library ---
+
+    fun openProject(id: Long) {
+        val target = _uiState.value.projects.firstOrNull { it.id == id } ?: return
+        projectStore.persistLastOpenProjectId(target.id)
+        _uiState.update { it.copy(project = target, code = ProjectOps.activeContent(target)) }
+    }
+
+    fun newProject(name: String) {
+        val created = ProjectOps.newProject(now(), name.trim().ifEmpty { "Untitled" }, now())
+        val updated = ProjectOps.upsert(_uiState.value.projects, created)
+        projectStore.persistProjects(updated)
+        projectStore.persistLastOpenProjectId(created.id)
+        _uiState.update { it.copy(projects = updated, project = created, code = ProjectOps.activeContent(created)) }
+    }
+
+    fun renameProject(id: Long, name: String) {
+        val target = _uiState.value.projects.firstOrNull { it.id == id } ?: return
+        val renamed = target.copy(name = name.trim().ifEmpty { target.name }, updatedAt = now())
+        val updated = ProjectOps.upsert(_uiState.value.projects, renamed)
+        projectStore.persistProjects(updated)
+        _uiState.update {
+            it.copy(
+                projects = updated,
+                project = if (it.project.id == id) renamed else it.project,
+            )
+        }
+    }
+
+    fun deleteProject(id: Long) {
+        var remaining = ProjectOps.delete(_uiState.value.projects, id)
+        if (remaining.isEmpty()) remaining = listOf(ProjectOps.newProject(now(), "Untitled", now()))
+        projectStore.persistProjects(remaining)
+        _uiState.update { state ->
+            if (state.project.id == id) {
+                val next = remaining.first()
+                projectStore.persistLastOpenProjectId(next.id)
+                state.copy(projects = remaining, project = next, code = ProjectOps.activeContent(next))
+            } else {
+                state.copy(projects = remaining)
+            }
+        }
+    }
+
+    private fun persistProject(project: Project) {
+        val updated = ProjectOps.upsert(_uiState.value.projects, project)
+        projectStore.persistProjects(updated)
+        projectStore.persistLastOpenProjectId(project.id)
+        _uiState.update { it.copy(projects = updated) }
+    }
+
+    // --- history / saved scripts (operate on the active file) ---
+
+    fun restoreFromHistory(entry: HistoryEntry) = onCodeChanged(entry.code)
 
     fun clearHistory() {
         historyStore.persist(emptyList())
         _uiState.update { it.copy(history = emptyList()) }
     }
 
-    /** Clears the backend session's workspace. */
-    fun resetSession() {
-        viewModelScope.launch {
-            repository.reset()
-                .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
-                .onFailure { throwable ->
-                    _uiState.update {
-                        it.copy(errorMessage = throwable.message ?: "Failed to reset the session.")
-                    }
-                }
-        }
-    }
-
-    /** Save the current editor contents as a new named script. No-op if blank. */
     fun saveCurrentScript(name: String) {
         val code = _uiState.value.code
         val trimmedName = name.trim()
         if (code.isBlank() || trimmedName.isEmpty()) return
-
         val timestamp = now()
         val script = SavedScript(id = timestamp, name = trimmedName, code = code, updatedAt = timestamp)
         val updated = SavedScriptLibrary.upsert(_uiState.value.savedScripts, script)
@@ -69,10 +167,7 @@ class EditorViewModel(
         _uiState.update { it.copy(savedScripts = updated) }
     }
 
-    /** Load a saved script into the editor. */
-    fun loadScript(script: SavedScript) {
-        _uiState.update { it.copy(code = script.code) }
-    }
+    fun loadScript(script: SavedScript) = onCodeChanged(script.code)
 
     fun deleteScript(id: Long) {
         val updated = SavedScriptLibrary.delete(_uiState.value.savedScripts, id)
@@ -80,15 +175,29 @@ class EditorViewModel(
         _uiState.update { it.copy(savedScripts = updated) }
     }
 
+    // --- session ---
+
+    fun resetSession() {
+        viewModelScope.launch {
+            repository.reset()
+                .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
+                .onFailure { t -> _uiState.update { it.copy(errorMessage = t.message ?: "Failed to reset the session.") } }
+        }
+    }
+
+    // --- run ---
+
     fun runCode() {
-        val code = _uiState.value.code
-        if (code.isBlank() || _uiState.value.isRunning) return
+        val project = _uiState.value.project
+        val entryContent = project.files.firstOrNull { it.name == project.entryFileName }?.content.orEmpty()
+        if (entryContent.isBlank() || _uiState.value.isRunning) return
 
         _uiState.update { it.copy(isRunning = true, errorMessage = null, timedOut = false) }
-        recordHistory(code)
+        recordHistory(entryContent)
 
+        val files = project.files.map { ExecFile(it.name, it.content) }
         viewModelScope.launch {
-            repository.run(code)
+            repository.run(files, project.entryFileName)
                 .onSuccess { response ->
                     _uiState.update {
                         it.copy(
@@ -102,13 +211,9 @@ class EditorViewModel(
                         )
                     }
                 }
-                .onFailure { throwable ->
+                .onFailure { t ->
                     _uiState.update {
-                        it.copy(
-                            isRunning = false,
-                            errorMessage = throwable.message ?: "Failed to reach the R execution backend.",
-                            timedOut = false,
-                        )
+                        it.copy(isRunning = false, errorMessage = t.message ?: "Failed to reach the R execution backend.", timedOut = false)
                     }
                 }
         }

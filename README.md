@@ -39,11 +39,14 @@ together. See `backend/README.md` for backend-specific setup and — important
 - **Durable R session** — variables and attached packages persist between runs
   and restarts; a workspace summary shows what's in scope, and "Reset session"
   clears it.
+- **CRAN package installation** — install packages that persist and load in
+  later runs, from a Packages screen.
+- **Multi-file projects** — named projects of `.R` files that `source()` each
+  other; a file switcher with a pinned entry file, and a project library.
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
-Not built yet: package installation UI, multi-file projects, on-device
-execution, iOS-app feature parity.
+Not built yet: on-device execution, iOS-app feature parity.
 
 ## Development
 

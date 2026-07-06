@@ -1,5 +1,6 @@
 package com.rmobile.console.data
 
+import com.rmobile.console.data.model.ExecFile
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
 import com.rmobile.console.data.model.InstallRequest
@@ -13,7 +14,14 @@ class RExecutionRepository(
     private val api: RExecutionApi,
 ) {
     suspend fun run(code: String, sessionId: String = DEFAULT_SESSION_ID): Result<ExecuteResponse> =
-        runCatching { api.execute(ExecuteRequest(code, sessionId)) }
+        runCatching { api.execute(ExecuteRequest(code = code, sessionId = sessionId)) }
+
+    suspend fun run(
+        files: List<ExecFile>,
+        entryFile: String,
+        sessionId: String = DEFAULT_SESSION_ID,
+    ): Result<ExecuteResponse> =
+        runCatching { api.execute(ExecuteRequest(sessionId = sessionId, files = files, entryFile = entryFile)) }
 
     suspend fun reset(sessionId: String = DEFAULT_SESSION_ID): Result<ResetResponse> =
         runCatching { api.reset(ResetRequest(sessionId)) }
