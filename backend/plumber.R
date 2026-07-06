@@ -43,7 +43,7 @@ INSTALL_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_INSTALL_TIMEOUT_SECONDS", "3
 CRAN_REPO <- Sys.getenv("R_CRAN_REPO", "https://packagemanager.posit.co/cran/__linux__/jammy/latest")
 
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -286,6 +286,24 @@ function(req, res) {
     installed = installed,
     systemRequirements = sysreqs
   )
+}
+
+#* Uninstall a package from the shared library
+#* @post /uninstall
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  pkg <- body$package
+  if (is.null(pkg) || !is.character(pkg) || length(pkg) != 1 || !grepl("^[A-Za-z0-9._]+$", pkg)) {
+    res$status <- 400
+    return(list(removed = FALSE, error = "Invalid or missing 'package' name."))
+  }
+  before <- pkg %in% rownames(installed.packages(lib.loc = PKG_LIB))
+  err <- tryCatch({
+    if (before) suppressWarnings(remove.packages(pkg, lib = PKG_LIB))
+    NULL
+  }, error = function(e) conditionMessage(e))
+  after <- pkg %in% rownames(installed.packages(lib.loc = PKG_LIB))
+  list(removed = before && !after, error = err)
 }
 
 #* Health check
