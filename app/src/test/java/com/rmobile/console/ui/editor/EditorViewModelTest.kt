@@ -12,6 +12,8 @@ import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
 import com.rmobile.console.data.network.RExecutionApi
 import com.rmobile.console.data.project.Project
+import com.rmobile.console.data.project.ProjectArchive
+import com.rmobile.console.data.project.ProjectFile
 import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
@@ -183,5 +185,26 @@ class EditorViewModelTest {
         vm.onCodeChanged("other")
         vm.loadScript(scripts.stored.first())
         assertEquals("saved code", vm.uiState.value.code)
+    }
+
+    @Test
+    fun `import adds and opens a project`() {
+        val vm = viewModel()
+        val bytes = ProjectArchive.export(
+            Project(5, "Imported", listOf(ProjectFile("main.R", "cat(7)")), "main.R", "main.R", 5),
+        )
+        vm.importProject(bytes, "fallback")
+        assertEquals("Imported", vm.uiState.value.project.name)
+        assertEquals("cat(7)", vm.uiState.value.code)
+        assertTrue(vm.uiState.value.projects.any { it.name == "Imported" })
+    }
+
+    @Test
+    fun `import of garbage sets an error and leaves the library unchanged`() {
+        val vm = viewModel()
+        val before = vm.uiState.value.projects.size
+        vm.importProject(byteArrayOf(9, 9, 9), "x")
+        assertEquals(before, vm.uiState.value.projects.size)
+        assertTrue(vm.uiState.value.errorMessage!!.contains("import", ignoreCase = true))
     }
 }

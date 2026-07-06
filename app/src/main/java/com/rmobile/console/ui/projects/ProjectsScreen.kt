@@ -34,6 +34,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.platform.LocalContext
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.ui.editor.EditorViewModel
 
@@ -44,8 +53,20 @@ fun ProjectsScreen(
     onOpenEditor: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
     var showNew by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Project?>(null) }
+    var importMenu by remember { mutableStateOf(false) }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+            if (bytes != null) {
+                val fallback = importDisplayName(context, uri)?.removeSuffix(".zip") ?: "Imported project"
+                viewModel.importProject(bytes, fallback)
+                onOpenEditor()
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -59,6 +80,18 @@ fun ProjectsScreen(
                 actions = {
                     IconButton(onClick = { showNew = true }) {
                         Icon(Icons.Default.Add, contentDescription = "New project")
+                    }
+                    IconButton(onClick = { importMenu = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More")
+                    }
+                    DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Import project…") },
+                            onClick = {
+                                importMenu = false
+                                importLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                            },
+                        )
                     }
                 },
             )
@@ -93,6 +126,9 @@ fun ProjectsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    IconButton(onClick = { shareProjectZip(context, project) }) {
+                        Icon(Icons.Default.Share, contentDescription = "Export project")
                     }
                     IconButton(onClick = { renameTarget = project }) {
                         Icon(Icons.Default.Edit, contentDescription = "Rename project")
@@ -147,3 +183,9 @@ private fun ProjectNameDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+private fun importDisplayName(context: android.content.Context, uri: Uri): String? =
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+        val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (c.moveToFirst() && idx >= 0) c.getString(idx) else null
+    }
