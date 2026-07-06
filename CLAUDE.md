@@ -168,10 +168,14 @@ that lib in an isolated subprocess and reports `installed`/`systemRequirements`;
 the image (no runtime apt — the container stays hardened).
 
 The Dockerfile/`docker-compose.yml` run this as an unprivileged user with a
-read-only root filesystem, dropped capabilities, and CPU/memory limits —
-**this is still not a hardened multi-tenant sandbox** (no network egress
-restriction, no per-request container/VM isolation; the rate limiter is a
-single-instance in-memory counter that trusts `REMOTE_ADDR`).
+read-only root filesystem, dropped capabilities, and CPU/memory limits. A
+**hardened deploy profile** (`docker-compose.hardened.yml`: an `internal` network
++ a Caddy reverse proxy) gives the execution container **no egress** and caps
+`/tmp`; since there's no egress, packages for a hardened deploy are baked at build
+via `packages.txt` (the `Dockerfile` reads it) rather than runtime `/install`.
+**Still not a hardened multi-tenant sandbox** — no per-request container/VM
+isolation (the outstanding gap), and the rate limiter is a single-instance
+in-memory counter that trusts `REMOTE_ADDR`.
 Read `backend/README.md`'s security section in full before changing the
 execution model or deploying this anywhere reachable from the internet —
 this service is arbitrary-code-execution-as-a-feature by design, so changes

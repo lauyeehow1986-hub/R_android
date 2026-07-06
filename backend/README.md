@@ -77,6 +77,25 @@ install (as binaries, no compilation); a package needing an un-baked lib fails
 and `/install` returns the apt command to add it (rebuild the image) — there is
 no runtime apt, so the container stays non-root + read-only-root.
 
+## Hardened deployment
+
+For exposing the backend beyond localhost, use the hardened profile, which gives
+the execution container **no network egress**:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d --build
+```
+
+`r-execution` runs only on an `internal` Docker network (no route to the
+internet) behind a Caddy reverse proxy, so submitted R code cannot reach
+cloud-metadata endpoints, internal services, or exfiltrate data. `/tmp` is
+size-capped (64m).
+
+Because there's no egress, runtime package installation (`POST /install`) does
+not work in this profile — **bake packages at build time** instead: add them to
+`packages.txt` (one per line) and rebuild the image. (Runtime `/install` stays
+available in the default/dev profile.)
+
 ## Security — read this before deploying anywhere reachable from the internet
 
 `/execute` runs arbitrary, untrusted R code. That is the entire point of the
@@ -102,11 +121,11 @@ in place today:
 What is **not** handled, and needs to be before this is exposed beyond your
 own dev machine:
 
-- **Network egress is not restricted.** Submitted R code can currently make
-  outbound HTTP requests, hit internal/cloud-metadata endpoints, etc. Put
-  this behind a network policy (firewall egress rules, or run it in a
-  container/VM with no route to anything sensitive) before trusting it with
-  real users.
+- **Network egress**: unrestricted in the default/dev profile, but **blocked in
+  the hardened profile** (see "Hardened deployment" above — `internal` network +
+  reverse proxy). Use the hardened profile before trusting this with real users;
+  the `/tmp` size cap there also limits scratch-disk abuse (the `sessions`/`rlib`
+  volumes are still unbounded).
 - **No per-request process isolation beyond a subprocess.** For real
   multi-tenant use, run each execution in its own ephemeral container,
   gVisor sandbox, or microVM (Firecracker) rather than trusting Linux
