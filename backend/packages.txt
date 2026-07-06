@@ -1,0 +1,3 @@
+# CRAN packages to bake into the image (one per line). Empty by default.
+# Add a package here and rebuild for a hardened (no-egress) deployment,
+# where runtime `install.packages()` / POST /install cannot reach CRAN.
