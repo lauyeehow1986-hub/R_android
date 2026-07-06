@@ -130,6 +130,11 @@ just the Plumber bootstrap (`plumb("plumber.R")$run(...)`).
 when `R_API_KEY` is set, and an in-process per-IP fixed-window rate limit when
 `R_RATE_LIMIT_PER_MINUTE > 0`. Both are **off by default** for local dev.
 
+`/execute` also accepts a multi-file project — `files` (`[{name,content}]`) +
+`entryFile` — which the handler writes into the run dir and runs by `source()`-ing
+the entry inside the same session wrapper (so `source()` between files works);
+the legacy single `code` field still works.
+
 **Durable sessions**: the wrapper the handler builds around user code has two
 bookends — before the code it `load()`s a per-session `workspace.RData` and
 replays recorded `library()` calls; after a **successful** run it `save.image()`s
@@ -168,9 +173,11 @@ here have different stakes than changes to the Android UI.
 `ExecuteRequest`/`ExecuteResponse`/`ResetRequest`/`ResetResponse` in
 `app/src/main/java/com/rmobile/console/data/model/ExecuteModels.kt`
 (kotlinx.serialization) must stay in sync field-for-field with the JSON
-returned by `plumber.R`. `/execute`: request `code` + optional `sessionId`;
-response `stdout`, `stderr`, `plots`, `error`, `timedOut`, `workspaceObjects`
-(nullable). `/reset`: request `sessionId`, response `ok`. `/install`
+returned by `plumber.R`. `/execute`: request `code` + optional `sessionId`, OR a
+multi-file project `files` (`[{name,content}]`) + `entryFile` (backend writes the
+files and `source()`s the entry; `files` wins over `code`); response `stdout`,
+`stderr`, `plots`, `error`, `timedOut`, `workspaceObjects` (nullable). `/reset`:
+request `sessionId`, response `ok`. `/install`
 (`InstallRequest`/`InstallResponse`, in `data/model/PackageModels.kt`): request
 `package` (Kotlin property `packageName` via `@SerialName("package")`), response
 `stdout`/`stderr`/`error`/`timedOut`/`installed`/`systemRequirements`.

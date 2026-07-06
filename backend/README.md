@@ -40,7 +40,11 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
   returns `429` if the per-IP rate limit is exceeded.
   Optional `sessionId` (defaults to `default`); the response adds
   `workspaceObjects` (names in the session's global env after the run, or
-  omitted when the run errored/timed out).
+  omitted when the run errored/timed out). Alternatively send a multi-file
+  project: `files` (a list of `{"name","content"}`) plus `entryFile` (one of the
+  names) — all files are written to the run dir and the entry is `source()`d, so
+  `source("helpers.R")` works. File names must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`;
+  `code` and `files` are mutually exclusive (`files` wins if present).
 - `POST /reset` — body `{"sessionId": "default"}`, clears that session's saved
   workspace and attached-package list. Returns `{"ok": true}`. Same auth /
   rate-limit rules as `/execute`.
