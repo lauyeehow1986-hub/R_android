@@ -23,7 +23,9 @@ services:
       - /tmp
     volumes:
       - r_sessions:/data/sessions
-      - r_rlib:/data/rlib
+      # /data/rlib is now a read-only legacy package source (LEGACY_PKG_LIB);
+      # per-session package libraries live under /data/sessions/<id>/rlib.
+      - r_rlib:/data/rlib:ro
     cap_drop:
       - ALL
     security_opt:
