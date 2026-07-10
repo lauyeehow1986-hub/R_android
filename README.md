@@ -53,6 +53,10 @@ together. See `backend/README.md` for backend-specific setup and — important
 - **Per-project R environments** — each project gets its own workspace and
   installed-package library on the backend; packages from the older shared
   library can be imported into a project on demand.
+- **Data import** — upload files (CSV, RDS, xlsx, anything) from your phone into a
+  project's session and read them in code by name (`read.csv("sales.csv")`), from a
+  dedicated **Data** screen (upload / list / delete). Tap a file to insert its name
+  into the editor.
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 

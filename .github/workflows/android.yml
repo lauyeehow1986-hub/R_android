@@ -62,6 +62,7 @@ jobs:
             any::testthat
             any::httr2
             any::withr
+            any::webutils
 
       - name: Run backend integration tests
         run: Rscript backend/run-tests.R

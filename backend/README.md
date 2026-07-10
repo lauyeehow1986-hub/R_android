@@ -94,6 +94,40 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
   Same auth / rate-limit rules as `/execute`.
 - `GET /health` — liveness check (never requires auth).
 
+### Data files (`/upload`, `/data`, `/delete-data`)
+
+Each session has a persistent `data/` dir (`SESSION_DIR/<id>/data`) for uploaded
+files. Executed code reads them by bare filename (they're symlinked into the run
+dir): `read.csv("sales.csv")`, `readRDS("model.rds")`.
+
+- `POST /upload?sessionId=<id>` — `multipart/form-data` with one part named `file`.
+  Filename is reduced to a safe basename (disallowed chars → `_`, reserved names
+  rejected). Size cap `R_UPLOAD_MAX_BYTES` (default 1 GiB). Returns `{name, size}`.
+- `GET /data?sessionId=<id>` → `{files: [{name, size}]}`.
+- `POST /delete-data` — `{name, sessionId}` → `{removed}`.
+
+Uploaded data is cleared by `POST /reset` and when a project is deleted.
+
+**Memory:** plumber buffers the whole upload in memory to parse the multipart
+body, so the container `mem_limit` (docker-compose) must exceed `R_UPLOAD_MAX_BYTES`.
+They move together — lower the cap and you can lower the limit.
+
+Because plumber populates `req$bodyRaw` with the *entire* request body before
+`/upload` runs, the app-level `R_UPLOAD_MAX_BYTES` check happens only *after* the
+body is already in memory — it can reject an over-cap file but cannot stop an
+oversized body from being buffered first. So an ingress body-size limit is the only
+thing that actually protects the container from an OOM-by-oversized-upload. The
+**hardened profile's Caddy proxy enforces this** (`Caddyfile` → `request_body
+max_size`, sized to `R_UPLOAD_MAX_BYTES` + framing margin), rejecting an over-limit
+body with `413` as it streams, before it reaches the backend. **Keep the Caddy
+`max_size` in step with `R_UPLOAD_MAX_BYTES`.** The plain `docker-compose.yml` dev
+profile has no such ingress cap and — like the rest of the unhardened stack — must
+not be exposed to untrusted clients.
+
+**Symlink caveat:** a data file is symlinked (not copied) into the run dir, so code
+that *writes* to that filename writes through to the stored copy. Fine for read-only
+data; re-upload to replace.
+
 ## Durable sessions
 
 Each session keeps `workspace.RData` (global-env objects) and `attached.txt`

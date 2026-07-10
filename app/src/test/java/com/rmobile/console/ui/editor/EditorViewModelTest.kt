@@ -373,4 +373,24 @@ class EditorViewModelTest {
         // The new project's session index is refetched.
         assertTrue(vm.uiState.value.completionSymbols.contains("fresh_sym"))
     }
+
+    @Test
+    fun `insertText appends a snippet on its own line`() = runTest {
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.onCodeChanged("head(x)")
+        vm.insertText("\"sales.csv\"")
+        advanceUntilIdle()
+        assertEquals("head(x)\n\"sales.csv\"", vm.uiState.value.code)
+    }
+
+    @Test
+    fun `insertText into empty code has no leading newline`() = runTest {
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.onCodeChanged("")
+        vm.insertText("\"sales.csv\"")
+        advanceUntilIdle()
+        assertEquals("\"sales.csv\"", vm.uiState.value.code)
+    }
 }
