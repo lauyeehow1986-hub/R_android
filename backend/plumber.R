@@ -559,9 +559,11 @@ function(req, res, sessionId = "default") {
   paths <- session_paths(sanitize_session_id(sessionId))
   if (!dir.exists(paths$data)) return(list(files = list()))
   names_sorted <- sort(list.files(paths$data, full.names = FALSE))
-  files <- lapply(names_sorted, function(n) {
-    list(name = n, size = as.numeric(file.info(file.path(paths$data, n))$size))
-  })
+  files <- Filter(Negate(is.null), lapply(names_sorted, function(n) {
+    info <- file.info(file.path(paths$data, n))
+    if (is.na(info$size)) return(NULL)
+    list(name = n, size = as.numeric(info$size))
+  }))
   list(files = files)
 }
 
