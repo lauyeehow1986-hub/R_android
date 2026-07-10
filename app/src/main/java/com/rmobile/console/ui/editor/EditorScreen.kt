@@ -424,9 +424,11 @@ private fun SuggestionStrip(
                 )
             }
         }
-        items(strip.suggestions) { symbol ->
+        items(strip.suggestions, key = { it }) { symbol ->
+            // combinedClickable is the sole tap/long-press source; AssistChip's own
+            // onClick is a no-op so a single tap can't fire onPick twice.
             AssistChip(
-                onClick = { onPick(symbol) },
+                onClick = {},
                 modifier = Modifier.combinedClickable(
                     onClick = { onPick(symbol) },
                     onLongClick = { onHelp(symbol) },
