@@ -12,6 +12,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.rmobile.console.ui.data.DataScreen
 import com.rmobile.console.ui.editor.EditorScreen
 import com.rmobile.console.ui.editor.EditorViewModel
 import com.rmobile.console.ui.packages.PackagesScreen
@@ -32,7 +33,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { EDITOR, SETTINGS, PACKAGES, PROJECTS }
+private enum class Screen { EDITOR, SETTINGS, PACKAGES, PROJECTS, DATA }
 
 @Composable
 private fun AppRoot() {
@@ -47,6 +48,7 @@ private fun AppRoot() {
             onOpenSettings = { screen = Screen.SETTINGS },
             onOpenPackages = { screen = Screen.PACKAGES },
             onOpenProjects = { screen = Screen.PROJECTS },
+            onOpenData = { screen = Screen.DATA },
             viewModel = editorViewModel,
         )
         Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.EDITOR })
@@ -58,6 +60,13 @@ private fun AppRoot() {
         Screen.PROJECTS -> ProjectsScreen(
             viewModel = editorViewModel,
             onOpenEditor = { screen = Screen.EDITOR },
+        )
+        Screen.DATA -> DataScreen(
+            onBack = { screen = Screen.EDITOR },
+            onInsertFileName = { name ->
+                editorViewModel.insertText(name)
+                screen = Screen.EDITOR
+            },
         )
     }
 }

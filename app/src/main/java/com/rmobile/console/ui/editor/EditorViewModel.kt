@@ -66,6 +66,18 @@ class EditorViewModel(
         _uiState.update { it.copy(project = updated, code = code) }
     }
 
+    /**
+     * Appends a snippet (e.g. a quoted data filename from the Data screen) to the
+     * code. Used across a screen switch, where the editor's cursor isn't available,
+     * so it appends on its own line rather than inserting at a cursor. Routes through
+     * [onCodeChanged] so the active project file mirrors the change.
+     */
+    fun insertText(snippet: String) {
+        val existing = _uiState.value.code
+        val separator = if (existing.isEmpty() || existing.endsWith("\n")) "" else "\n"
+        onCodeChanged(existing + separator + snippet)
+    }
+
     fun switchFile(name: String) {
         val updated = ProjectOps.setActive(_uiState.value.project, name)
         persistProject(updated)

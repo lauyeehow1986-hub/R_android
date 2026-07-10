@@ -119,6 +119,7 @@ fun EditorScreen(
     onOpenSettings: () -> Unit,
     onOpenPackages: () -> Unit,
     onOpenProjects: () -> Unit = {},
+    onOpenData: () -> Unit = {},
     viewModel: EditorViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -232,6 +233,13 @@ fun EditorScreen(
                             onClick = {
                                 menuOpen = false
                                 onOpenProjects()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Data files") },
+                            onClick = {
+                                menuOpen = false
+                                onOpenData()
                             },
                         )
                     }
