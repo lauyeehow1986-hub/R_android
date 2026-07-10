@@ -266,6 +266,7 @@ function(req, res) {
   session_id <- sanitize_session_id(body$sessionId)
   paths <- session_paths(session_id)
   unlink(c(paths$workspace, paths$attached), force = TRUE)
+  if (isTRUE(body$purgePackages)) unlink(paths$rlib, recursive = TRUE, force = TRUE)
   list(ok = TRUE)
 }
 
@@ -343,6 +344,30 @@ function(req, res) {
   }, error = function(e) conditionMessage(e))
   after <- pkg %in% rownames(installed.packages(lib.loc = lib))
   list(removed = before && !after, error = err)
+}
+
+#* Copy packages from the legacy shared library into a session's library
+#* @post /import-legacy
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  lib <- session_paths(sanitize_session_id(body$sessionId))$rlib
+  dir.create(lib, recursive = TRUE, showWarnings = FALSE)
+
+  legacy <- if (dir.exists(LEGACY_PKG_LIB)) {
+    tryCatch(rownames(installed.packages(lib.loc = LEGACY_PKG_LIB)), error = function(e) NULL)
+  } else NULL
+  if (is.null(legacy)) legacy <- character(0)
+
+  present <- tryCatch(rownames(installed.packages(lib.loc = lib)), error = function(e) NULL)
+  if (is.null(present)) present <- character(0)
+
+  copied <- character(0)
+  for (p in setdiff(legacy, present)) {
+    ok <- tryCatch({ file.copy(file.path(LEGACY_PKG_LIB, p), lib, recursive = TRUE); TRUE },
+                   error = function(e) FALSE)
+    if (isTRUE(ok)) copied <- c(copied, p)
+  }
+  list(imported = length(copied), packages = as.list(copied))
 }
 
 #* Health check
