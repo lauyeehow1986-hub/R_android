@@ -63,11 +63,14 @@ class EditorViewModelTest {
             com.rmobile.console.data.model.SymbolsResponse(listOf("mean", "median"))
         var helpResponse: com.rmobile.console.data.model.HelpResponse =
             com.rmobile.console.data.model.HelpResponse(topic = "mean", packageName = "base", text = "Usage", found = true)
+        var helpError: Throwable? = null
         var lastHelp: com.rmobile.console.data.model.HelpRequest? = null
 
         override suspend fun symbols(sessionId: String) = symbolsResponse
         override suspend fun help(request: com.rmobile.console.data.model.HelpRequest): com.rmobile.console.data.model.HelpResponse {
-            lastHelp = request; return helpResponse
+            lastHelp = request
+            helpError?.let { throw it }
+            return helpResponse
         }
     }
 
@@ -324,6 +327,24 @@ class EditorViewModelTest {
         vm.showHelp("mean")
         advanceUntilIdle()
         vm.dismissHelp()
+        assertEquals(null, vm.uiState.value.help)
+    }
+
+    @Test
+    fun `showHelp maps failure to Error`() = runTest {
+        val api = FakeApi()
+        api.helpError = RuntimeException("network down")
+        val vm = viewModel(api = api)
+        vm.showHelp("mean")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.help is HelpState.Error)
+    }
+
+    @Test
+    fun `showHelp with blank topic is a no-op`() = runTest {
+        val vm = viewModel(api = FakeApi())
+        vm.showHelp("   ")
+        advanceUntilIdle()
         assertEquals(null, vm.uiState.value.help)
     }
 }

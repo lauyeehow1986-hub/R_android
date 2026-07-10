@@ -273,9 +273,13 @@ class EditorViewModel(
     fun refreshSymbols() {
         val session = ProjectSession.of(_uiState.value.project)
         viewModelScope.launch {
-            symbolIndex = repository.listSymbols(session).getOrNull().orEmpty()
-            packageNames = repository.listPackages(session).getOrNull()?.packages.orEmpty()
-            recomputeSymbols()
+            val syms = repository.listSymbols(session).getOrNull().orEmpty()
+            val pkgs = repository.listPackages(session).getOrNull()?.packages.orEmpty()
+            if (ProjectSession.of(_uiState.value.project) == session) {
+                symbolIndex = syms
+                packageNames = pkgs
+                recomputeSymbols()
+            }
         }
     }
 
