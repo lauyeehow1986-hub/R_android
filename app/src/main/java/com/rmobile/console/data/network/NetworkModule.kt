@@ -64,6 +64,28 @@ object NetworkModule {
             .create(RExecutionApi::class.java)
     }
 
+    // A client for data endpoints: no overall call timeout (a 1 GiB upload over a
+    // LAN can exceed the 30s cap on the main client), but a read timeout so a hung
+    // backend still fails. Shares the host-rewriting interceptor so the runtime
+    // backend URL + API key still apply. No logging interceptor (don't log bodies).
+    private val dataClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .writeTimeout(0, TimeUnit.MILLISECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .addInterceptor(hostSelectionInterceptor)
+            .build()
+    }
+
+    val rDataApi: RDataApi by lazy {
+        Retrofit.Builder()
+            .baseUrl(BuildConfig.R_EXECUTION_BASE_URL)
+            .client(dataClient)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(RDataApi::class.java)
+    }
+
     // A plain client with no host-rewriting interceptor, so a connection test can
     // hit an arbitrary (not-yet-saved) URL directly.
     private val probeClient: OkHttpClient by lazy {
