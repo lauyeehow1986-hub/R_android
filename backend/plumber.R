@@ -185,6 +185,20 @@ function(req, res) {
   paths <- session_paths(session_id)
   dir.create(paths$dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(paths$rlib, recursive = TRUE, showWarnings = FALSE)
+
+  # Expose the session's uploaded data files by symlinking them into the run dir
+  # (the working directory), so user code reads them by bare filename without
+  # copying potentially gigabyte-sized files on every run. The entry files are
+  # already written, so file.exists() keeps a data file from shadowing them.
+  if (dir.exists(paths$data)) {
+    for (df in list.files(paths$data, full.names = FALSE)) {
+      link <- file.path(run_dir, df)
+      if (!file.exists(link)) {
+        try(file.symlink(file.path(paths$data, df), link), silent = TRUE)
+      }
+    }
+  }
+
   objects_path <- file.path(run_dir, "objects.txt")
 
   attached_literal <- paste(deparse(DEFAULT_ATTACHED), collapse = "")
@@ -291,6 +305,7 @@ function(req, res) {
   session_id <- sanitize_session_id(body$sessionId)
   paths <- session_paths(session_id)
   unlink(c(paths$workspace, paths$attached), force = TRUE)
+  unlink(paths$data, recursive = TRUE, force = TRUE)
   if (isTRUE(body$purgePackages)) unlink(paths$rlib, recursive = TRUE, force = TRUE)
   list(ok = TRUE)
 }
@@ -536,4 +551,28 @@ function(req, res, sessionId = "default") {
   dir.create(paths$data, recursive = TRUE, showWarnings = FALSE)
   writeBin(raw, file.path(paths$data, name))
   list(name = name, size = size)
+}
+
+#* List a session's uploaded data files.
+#* @get /data
+function(req, res, sessionId = "default") {
+  paths <- session_paths(sanitize_session_id(sessionId))
+  if (!dir.exists(paths$data)) return(list(files = list()))
+  names_sorted <- sort(list.files(paths$data, full.names = FALSE))
+  files <- lapply(names_sorted, function(n) {
+    list(name = n, size = as.numeric(file.info(file.path(paths$data, n))$size))
+  })
+  list(files = files)
+}
+
+#* Delete one uploaded data file from a session.
+#* @post /delete-data
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  name <- sanitize_data_name(body$name)
+  session_id <- sanitize_session_id(body$sessionId)
+  if (is.null(name)) return(list(removed = FALSE))
+  target <- file.path(session_paths(session_id)$data, name)
+  removed <- file.exists(target) && unlink(target) == 0
+  list(removed = isTRUE(removed))
 }
