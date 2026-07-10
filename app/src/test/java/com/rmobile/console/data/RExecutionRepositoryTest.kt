@@ -17,7 +17,6 @@ import com.rmobile.console.data.model.UninstallResponse
 import com.rmobile.console.data.network.RExecutionApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RExecutionRepositoryTest {
@@ -53,9 +52,9 @@ class RExecutionRepositoryTest {
     @Test
     fun `help passes topic and session`() = runTest {
         val api = FakeApi()
-        RExecutionRepository(api).help("lm", "proj-2")
+        val result = RExecutionRepository(api).help("lm", "proj-2")
         assertEquals("lm", api.lastHelp!!.topic)
         assertEquals("proj-2", api.lastHelp!!.sessionId)
-        assertTrue(true)
+        assertEquals(HelpResponse(topic = "mean", found = true), result.getOrNull())
     }
 }
