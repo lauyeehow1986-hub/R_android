@@ -92,3 +92,25 @@ post_help <- function(server, topic, session_id = NULL, key = NULL) {
 }
 
 get_health <- function(server) api_request(server, "/health")
+
+post_upload <- function(server, path, session_id = NULL, key = NULL) {
+  req <- request(server$base_url) |>
+    req_url_path("/upload") |>
+    req_error(is_error = function(resp) FALSE)
+  if (!is.null(session_id)) req <- req_url_query(req, sessionId = session_id)
+  if (!is.null(key)) req <- req_headers(req, "X-API-Key" = key)
+  req <- req_body_multipart(req, file = curl::form_file(path, type = "application/octet-stream"))
+  resp <- req_perform(req)
+  list(status = resp_status(resp), body = tryCatch(resp_body_json(resp), error = function(e) NULL))
+}
+
+get_data <- function(server, session_id = NULL, key = NULL) {
+  query <- if (!is.null(session_id)) list(sessionId = session_id) else NULL
+  api_request(server, "/data", query = query, key = key)
+}
+
+post_delete_data <- function(server, name, session_id = NULL, key = NULL) {
+  body <- list(name = name)
+  if (!is.null(session_id)) body$sessionId <- session_id
+  api_request(server, "/delete-data", body = body, key = key)
+}
