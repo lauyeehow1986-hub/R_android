@@ -160,6 +160,25 @@ class EditorViewModelTest {
     }
 
     @Test
+    fun `run maps tables into state and clears them on failure`() = runTest {
+        val table = com.rmobile.console.data.model.RTable(
+            columns = listOf("x"), columnTypes = listOf("numeric"),
+            rows = listOf(listOf("1")), totalRows = 1,
+        )
+        val api = FakeApi(ExecuteResponse(stdout = "ok", tables = listOf(table)))
+        val vm = viewModel(api = api)
+        vm.onCodeChanged("data.frame(x=1)")
+        vm.runCode()
+        advanceUntilIdle()
+        assertEquals(listOf(table), vm.uiState.value.tables)
+
+        api.error = RuntimeException("boom")
+        vm.runCode()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.tables.isEmpty())
+    }
+
+    @Test
     fun `failed run surfaces an error`() = runTest {
         val vm = viewModel(api = FakeApi(error = RuntimeException("boom")))
         vm.onCodeChanged("x")
