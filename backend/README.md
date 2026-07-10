@@ -35,7 +35,12 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
 ## Endpoints
 
 - `POST /execute` — body `{"code": "<R source>"}`, returns
-  `{"stdout", "stderr", "plots": ["<base64 png>", ...], "error", "timedOut"}`.
+  `{"stdout", "stderr", "plots": ["<base64 png>", ...], "tables", "error", "timedOut"}`.
+  Any data frame, tibble, data.table, matrix, or 2-D `table` **printed at the
+  script's top level** (`df`, `head(df)`, `summary(cars)`, or `print(df)`) is also
+  returned in `tables` as `{"columns","columnTypes","rows","totalRows"}` (rows
+  capped at `R_TABLE_MAX_ROWS`, default 200; `totalRows` is the true count).
+  Data frames printed *inside* a function or a `source()`d helper are not captured.
   When `R_API_KEY` is set, requires an `X-API-Key: <key>` header (else `401`);
   returns `429` if the per-IP rate limit is exceeded.
   Optional `sessionId` (defaults to `default`); the response adds

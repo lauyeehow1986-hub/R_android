@@ -193,7 +193,13 @@ here have different stakes than changes to the Android UI.
 returned by `plumber.R`. `/execute`: request `code` + optional `sessionId`, OR a
 multi-file project `files` (`[{name,content}]`) + `entryFile` (backend writes the
 files and `source()`s the entry; `files` wins over `code`); response `stdout`,
-`stderr`, `plots`, `error`, `timedOut`, `workspaceObjects` (nullable). `/reset`:
+`stderr`, `plots`, `tables`, `error`, `timedOut`, `workspaceObjects` (nullable).
+`tables` (`RTable(columns, columnTypes, rows, totalRows)`) holds any data
+frame/tibble/data.table/matrix/2-D `table` **printed at the entry's top level** —
+the wrapper runs top-level expressions through a `withVisible` eval loop
+(instead of bare `source()`) and emits `inherits(., "data.frame")`/2-D values as
+`table*.json` side-channel files (rows capped at `R_TABLE_MAX_ROWS`, default
+200); prints inside functions/`source()`d files aren't captured. `/reset`:
 request `sessionId`, response `ok`. `/install`
 (`InstallRequest`/`InstallResponse`, in `data/model/PackageModels.kt`): request
 `package` (Kotlin property `packageName` via `@SerialName("package")`), response
