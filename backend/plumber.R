@@ -49,7 +49,7 @@ INSTALL_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_INSTALL_TIMEOUT_SECONDS", "3
 CRAN_REPO <- Sys.getenv("R_CRAN_REPO", "https://packagemanager.posit.co/cran/__linux__/jammy/latest")
 
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy", "/symbols")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy", "/symbols", "/help")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -421,4 +421,59 @@ function(sessionId = "default") {
   )
   syms <- if (!inherits(result, "error") && file.exists(out_path)) readLines(out_path) else character(0)
   list(symbols = as.list(syms))
+}
+
+#* Render an R help topic to text for a session
+#* @post /help
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  topic <- body$topic
+  if (is.null(topic) || !is.character(topic) || length(topic) != 1 || !grepl("^[A-Za-z0-9._]+$", topic)) {
+    res$status <- 400
+    return(list(
+      topic = if (is.character(topic) && length(topic) == 1) topic else "",
+      packageName = NULL, text = "", found = FALSE
+    ))
+  }
+
+  session_id <- sanitize_session_id(body$sessionId)
+  paths <- session_paths(session_id)
+  dir.create(paths$rlib, recursive = TRUE, showWarnings = FALSE)
+
+  run_dir <- file.path(tempdir(), paste0("help-", format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", sample.int(1e6, 1)))
+  dir.create(run_dir, recursive = TRUE)
+  on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  script_path <- file.path(run_dir, "help.R")
+  out_text <- file.path(run_dir, "help.txt")
+  out_pkg <- file.path(run_dir, "pkg.txt")
+
+  writeLines(c(
+    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(paths$rlib)),
+    sprintf('topic <- %s', shQuote(topic)),
+    # Resolve help for a topic held in a variable via substitute(); then fetch the
+    # parsed Rd with utils:::.getHelpFile (the API the help system itself uses) and
+    # render it to text with tools::Rd2txt.
+    'h <- tryCatch(eval(substitute(utils::help(TT), list(TT = as.name(topic)))), error = function(e) NULL)',
+    'if (!is.null(h) && length(h) >= 1) {',
+    '  path <- as.character(h)[1]',
+    '  tryCatch({',
+    '    rd <- utils:::.getHelpFile(path)',
+    sprintf('    tools::Rd2txt(rd, out = %s)', shQuote(out_text)),
+    sprintf('    writeLines(basename(dirname(dirname(path))), %s)', shQuote(out_pkg)),
+    '  }, error = function(e) NULL)',
+    '}'
+  ), script_path)
+
+  result <- tryCatch(
+    processx::run("Rscript", c("--vanilla", script_path), wd = run_dir,
+                  timeout = EXECUTION_TIMEOUT_SECONDS, error_on_status = FALSE),
+    error = function(e) e
+  )
+
+  text <- if (!inherits(result, "error") && file.exists(out_text)) {
+    paste(readLines(out_text, warn = FALSE), collapse = "\n")
+  } else ""
+  pkg <- if (file.exists(out_pkg)) readLines(out_pkg, warn = FALSE)[1] else NULL
+
+  list(topic = topic, packageName = pkg, text = text, found = nzchar(text))
 }

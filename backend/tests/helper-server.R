@@ -85,4 +85,10 @@ get_symbols <- function(server, session_id = NULL, key = NULL) {
   api_request(server, "/symbols", query = query, key = key)
 }
 
+post_help <- function(server, topic, session_id = NULL, key = NULL) {
+  body <- list(topic = topic)
+  if (!is.null(session_id)) body$sessionId <- session_id
+  api_request(server, "/help", body = body, key = key)
+}
+
 get_health <- function(server) api_request(server, "/health")

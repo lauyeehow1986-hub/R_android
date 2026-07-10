@@ -21,3 +21,27 @@ test_that("/symbols reflects attached packages and is session-scoped", {
   without_syms <- unlist(get_symbols(srv, session_id = "nopkg")$body$symbols)
   expect_false("praise" %in% without_syms)
 })
+
+test_that("/help renders base help to text", {
+  srv <- local_server()
+  res <- post_help(srv, "mean")
+  expect_equal(res$status, 200)
+  expect_true(isTRUE(res$body$found))
+  expect_equal(res$body$packageName, "base")
+  expect_match(res$body$text, "Usage")
+})
+
+test_that("/help reports not-found for unknown topics", {
+  srv <- local_server()
+  res <- post_help(srv, "zzznotarealfn")
+  expect_equal(res$status, 200)
+  expect_false(isTRUE(res$body$found))
+  expect_equal(res$body$text, "")
+})
+
+test_that("/help rejects an invalid topic with 400", {
+  srv <- local_server()
+  res <- api_request(srv, "/help", body = list(topic = "a b"))
+  expect_equal(res$status, 400)
+  expect_false(isTRUE(res$body$found))
+})
