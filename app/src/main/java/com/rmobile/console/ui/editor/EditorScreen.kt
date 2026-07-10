@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,10 +25,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -46,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -124,6 +129,7 @@ fun EditorScreen(
     var showResetConfirm by remember { mutableStateOf(false) }
     var showAddFile by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
+    var showHelpSearch by remember { mutableStateOf(false) }
 
     // Local, cursor-aware editor state. Synced from uiState.code so history /
     // saved-script loads (which change code in the ViewModel) update the field.
@@ -196,6 +202,9 @@ fun EditorScreen(
                     }
                     IconButton(onClick = { showHistory = true }) {
                         Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Run history")
+                    }
+                    IconButton(onClick = { showHelpSearch = true }) {
+                        Icon(Icons.Default.Info, contentDescription = "R help")
                     }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -380,6 +389,38 @@ fun EditorScreen(
             onDismiss = { renameTarget = null },
         )
     }
+
+    if (showHelpSearch) {
+        var query by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showHelpSearch = false },
+            title = { Text("R help") },
+            text = {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text("Function or topic") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showHelpSearch = false
+                        viewModel.showHelp(query)
+                    },
+                    enabled = query.isNotBlank(),
+                ) { Text("Open") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHelpSearch = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    uiState.help?.let { help ->
+        HelpSheet(help = help, onDismiss = viewModel::dismissHelp)
+    }
 }
 
 @Composable
@@ -435,6 +476,54 @@ private fun SuggestionStrip(
                 ),
                 label = { Text(symbol, fontFamily = FontFamily.Monospace) },
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HelpSheet(help: HelpState, onDismiss: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when (help) {
+                is HelpState.Loading -> {
+                    Text(
+                        "Loading help for ${help.topic}…",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    CircularProgressIndicator()
+                }
+                is HelpState.NotFound -> Text(
+                    "No help found for '${help.topic}'.",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                is HelpState.Error -> Text(
+                    help.message,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                is HelpState.Loaded -> {
+                    val pkg = help.response.packageName
+                    val title = if (pkg != null) "${help.response.topic} {$pkg}" else help.response.topic
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    SelectionContainer {
+                        Text(
+                            text = help.response.text,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 480.dp)
+                                .verticalScroll(rememberScrollState()),
+                        )
+                    }
+                }
+            }
         }
     }
 }

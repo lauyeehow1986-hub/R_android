@@ -50,7 +50,11 @@ private fun AppRoot() {
             viewModel = editorViewModel,
         )
         Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.EDITOR })
-        Screen.PACKAGES -> PackagesScreen(onBack = { screen = Screen.EDITOR })
+        Screen.PACKAGES -> PackagesScreen(onBack = {
+            screen = Screen.EDITOR
+            // Installing/uninstalling a package changes the session's symbols; refresh.
+            editorViewModel.refreshSymbols()
+        })
         Screen.PROJECTS -> ProjectsScreen(
             viewModel = editorViewModel,
             onOpenEditor = { screen = Screen.EDITOR },
