@@ -37,6 +37,7 @@ class EditorViewModel(
 
     private var symbolIndex: List<String> = emptyList()
     private var packageNames: List<String> = emptyList()
+    private var helpRequestId = 0
 
     init {
         val loaded = projectStore.loadProjects()
@@ -286,20 +287,30 @@ class EditorViewModel(
     fun showHelp(topic: String) {
         val t = topic.trim()
         if (t.isEmpty()) return
+        // Stamp each request so a stale response (e.g. after the user dismissed the
+        // sheet, or fired a newer lookup) can't overwrite current help state.
+        val requestId = ++helpRequestId
         val session = ProjectSession.of(_uiState.value.project)
         _uiState.update { it.copy(help = HelpState.Loading(t)) }
         viewModelScope.launch {
             repository.help(t, session)
                 .onSuccess { resp ->
-                    _uiState.update {
-                        it.copy(help = if (resp.found) HelpState.Loaded(resp) else HelpState.NotFound(t))
+                    if (requestId == helpRequestId) {
+                        _uiState.update {
+                            it.copy(help = if (resp.found) HelpState.Loaded(resp) else HelpState.NotFound(t))
+                        }
                     }
                 }
                 .onFailure { th ->
-                    _uiState.update { it.copy(help = HelpState.Error(t, th.message ?: "Failed to load help.")) }
+                    if (requestId == helpRequestId) {
+                        _uiState.update { it.copy(help = HelpState.Error(t, th.message ?: "Failed to load help.")) }
+                    }
                 }
         }
     }
 
-    fun dismissHelp() = _uiState.update { it.copy(help = null) }
+    fun dismissHelp() {
+        helpRequestId++ // invalidate any in-flight request so it can't resurface the sheet
+        _uiState.update { it.copy(help = null) }
+    }
 }

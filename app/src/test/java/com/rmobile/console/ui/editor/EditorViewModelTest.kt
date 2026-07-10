@@ -347,4 +347,13 @@ class EditorViewModelTest {
         advanceUntilIdle()
         assertEquals(null, vm.uiState.value.help)
     }
+
+    @Test
+    fun `dismiss during loading keeps the sheet closed when the response arrives`() = runTest {
+        val vm = viewModel(api = FakeApi())
+        vm.showHelp("mean")           // sets Loading, schedules the lookup
+        vm.dismissHelp()              // user closes the sheet before it resolves
+        advanceUntilIdle()            // the in-flight response now completes
+        assertEquals(null, vm.uiState.value.help) // must not resurface the sheet
+    }
 }
