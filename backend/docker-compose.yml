@@ -30,7 +30,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 512m
+    # Raised above the default because POST /upload buffers the whole multipart
+    # body in memory (see R_UPLOAD_MAX_BYTES, default 1 GiB). Lower both together.
+    mem_limit: 2g
     cpus: 1.0
 
 volumes:
