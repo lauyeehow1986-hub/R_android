@@ -111,8 +111,9 @@ Retrofit client, not worth a framework yet):
   formatter. Tapping "Insert" calls `EditorViewModel.insertText(name)` (appends the
   quoted filename on its own line via `onCodeChanged`, so the active project file
   mirrors it) and returns to the editor. The Data screen is reached from a "Data
-  files" item in the editor's overflow menu and shares the one hoisted
-  `EditorViewModel` (like Packages/Projects).
+  files" item in the editor's overflow menu; like the Packages screen it owns its own
+  `DataViewModel` for list/upload state, and only the tap-to-insert action reaches the
+  hoisted `EditorViewModel` (via the `onInsertFileName` callback wired in `MainActivity`).
 - Plot sharing (`ui/editor/PlotSharing.kt`) writes a decoded PNG to
   `cacheDir/shared` and opens a share sheet via a `FileProvider` declared in the
   manifest (`res/xml/file_paths.xml`); "Copy output" uses the Compose clipboard.

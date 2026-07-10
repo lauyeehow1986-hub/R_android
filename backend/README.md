@@ -112,6 +112,18 @@ Uploaded data is cleared by `POST /reset` and when a project is deleted.
 body, so the container `mem_limit` (docker-compose) must exceed `R_UPLOAD_MAX_BYTES`.
 They move together — lower the cap and you can lower the limit.
 
+Because plumber populates `req$bodyRaw` with the *entire* request body before
+`/upload` runs, the app-level `R_UPLOAD_MAX_BYTES` check happens only *after* the
+body is already in memory — it can reject an over-cap file but cannot stop an
+oversized body from being buffered first. So an ingress body-size limit is the only
+thing that actually protects the container from an OOM-by-oversized-upload. The
+**hardened profile's Caddy proxy enforces this** (`Caddyfile` → `request_body
+max_size`, sized to `R_UPLOAD_MAX_BYTES` + framing margin), rejecting an over-limit
+body with `413` as it streams, before it reaches the backend. **Keep the Caddy
+`max_size` in step with `R_UPLOAD_MAX_BYTES`.** The plain `docker-compose.yml` dev
+profile has no such ingress cap and — like the rest of the unhardened stack — must
+not be exposed to untrusted clients.
+
 **Symlink caveat:** a data file is symlinked (not copied) into the run dir, so code
 that *writes* to that filename writes through to the stored copy. Fine for read-only
 data; re-upload to replace.

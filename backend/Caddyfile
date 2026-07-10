@@ -1,3 +1,13 @@
 :8000 {
+	# Bound the request body at the ingress. plumber buffers the entire multipart
+	# body into memory (req$bodyRaw) before /upload can check R_UPLOAD_MAX_BYTES,
+	# so an oversized adversarial upload would OOM the execution container before
+	# the app-level cap ever runs. Caddy rejects an over-limit body (413) as it
+	# streams, before it reaches the backend, making this the only effective guard.
+	# Keep in step with R_UPLOAD_MAX_BYTES (default 1 GiB): this is 1 GiB + a small
+	# margin for multipart framing. Raise both together if you raise the upload cap.
+	request_body {
+		max_size 1030MiB
+	}
 	reverse_proxy r-execution:8000
 }
