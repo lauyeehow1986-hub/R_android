@@ -12,6 +12,7 @@ import com.rmobile.console.data.network.NetworkModule
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectArchive
 import com.rmobile.console.data.project.ProjectOps
+import com.rmobile.console.data.project.ProjectSession
 import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptLibrary
@@ -127,6 +128,9 @@ class EditorViewModel(
     }
 
     fun deleteProject(id: Long) {
+        _uiState.value.projects.firstOrNull { it.id == id }?.let { victim ->
+            viewModelScope.launch { repository.reset(ProjectSession.of(victim), purgePackages = true) }
+        }
         var remaining = ProjectOps.delete(_uiState.value.projects, id)
         if (remaining.isEmpty()) remaining = listOf(ProjectOps.newProject(now(), "Untitled", now()))
         projectStore.persistProjects(remaining)
@@ -199,8 +203,9 @@ class EditorViewModel(
     // --- session ---
 
     fun resetSession() {
+        val session = ProjectSession.of(_uiState.value.project)
         viewModelScope.launch {
-            repository.reset()
+            repository.reset(session)
                 .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
                 .onFailure { t -> _uiState.update { it.copy(errorMessage = t.message ?: "Failed to reset the session.") } }
         }
@@ -217,8 +222,9 @@ class EditorViewModel(
         recordHistory(entryContent)
 
         val files = project.files.map { ExecFile(it.name, it.content) }
+        val session = ProjectSession.of(project)
         viewModelScope.launch {
-            repository.run(files, project.entryFileName)
+            repository.run(files, project.entryFileName, session)
                 .onSuccess { response ->
                     _uiState.update {
                         it.copy(

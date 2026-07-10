@@ -19,6 +19,7 @@ import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectArchive
 import com.rmobile.console.data.project.ProjectFile
 import com.rmobile.console.data.project.ProjectOps
+import com.rmobile.console.data.project.ProjectSession
 import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptStore
@@ -42,13 +43,17 @@ class EditorViewModelTest {
         var response: ExecuteResponse = ExecuteResponse(stdout = "ok"),
         var error: Throwable? = null,
         var lastRequest: ExecuteRequest? = null,
+        var lastReset: ResetRequest? = null,
     ) : RExecutionApi {
         override suspend fun execute(request: ExecuteRequest): ExecuteResponse {
             lastRequest = request
             error?.let { throw it }
             return response
         }
-        override suspend fun reset(request: ResetRequest): ResetResponse = ResetResponse(ok = true)
+        override suspend fun reset(request: ResetRequest): ResetResponse {
+            lastReset = request
+            return ResetResponse(ok = true)
+        }
         override suspend fun install(request: InstallRequest): InstallResponse = InstallResponse(installed = true)
         override suspend fun uninstall(request: UninstallRequest): UninstallResponse = UninstallResponse(removed = true)
         override suspend fun packages(sessionId: String): PackagesResponse = PackagesResponse()
@@ -231,5 +236,33 @@ class EditorViewModelTest {
         vm.importProject(byteArrayOf(9, 9, 9), "x")
         assertEquals(before, vm.uiState.value.projects.size)
         assertTrue(vm.uiState.value.errorMessage!!.contains("import", ignoreCase = true))
+    }
+
+    @Test
+    fun `run sends the active project's session id`() = runTest {
+        val api = FakeApi(ExecuteResponse(stdout = "done"))
+        val vm = viewModel(api = api)
+        vm.onCodeChanged("cat(1)")
+        vm.runCode()
+        advanceUntilIdle()
+
+        val expectedSession = ProjectSession.of(vm.uiState.value.project)
+        assertEquals(expectedSession, api.lastRequest!!.sessionId)
+    }
+
+    @Test
+    fun `deleting a project purges its backend session`() = runTest {
+        val api = FakeApi()
+        val vm = viewModel(api = api)
+        vm.newProject("Second")
+        val victim = vm.uiState.value.project
+        val victimSession = ProjectSession.of(victim)
+
+        vm.deleteProject(victim.id)
+        advanceUntilIdle()
+
+        val reset = api.lastReset!!
+        assertEquals(victimSession, reset.sessionId)
+        assertTrue(reset.purgePackages)
     }
 }
