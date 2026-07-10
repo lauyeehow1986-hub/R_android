@@ -74,6 +74,24 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
   the legacy shared library (`R_PKG_LIB`, now read-only) into that session's
   library, skipping any already present. Returns `{"imported":<int>,"packages":[...]}`.
   Same auth / rate-limit rules as `/execute`.
+- `GET /symbols` — returns completion symbol names for a session: the exported
+  names of R's base and default auto-attached packages (`base`, `methods`,
+  `datasets`, `utils`, `grDevices`, `graphics`, `stats`) plus every package the
+  session has `library()`-d (read from that session's recorded
+  attached-package list). Runs in an isolated `Rscript --vanilla` subprocess
+  with the session's library on `.libPaths()`. Takes an optional `?sessionId=`
+  query param (default `default`). Returns `{"symbols": ["abbreviate",
+  "abline", "abs", ...]}` — sorted, de-duplicated, and capped at
+  `R_SYMBOLS_MAX` (default 5000). Read-only. Same auth / rate-limit rules as
+  `/execute`.
+- `POST /help` — renders an R help topic to plain text with `tools::Rd2txt`.
+  Body `{"topic":"mean","sessionId":"proj-123"}` (`sessionId` optional,
+  default `default`); `topic` must match `^[A-Za-z0-9._]+$` (else `400`).
+  Resolves across base R and the session's installed/attached packages.
+  Returns `{"topic","packageName","text","found"}`, e.g.
+  `{"topic":"mean","packageName":"base","text":"mean {base}\n...","found":true}`;
+  `found` is `false` with an empty `text` when no topic matches. Read-only.
+  Same auth / rate-limit rules as `/execute`.
 - `GET /health` — liveness check (never requires auth).
 
 ## Durable sessions
