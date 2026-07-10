@@ -7,4 +7,5 @@ data class PackagesUiState(
     val message: String? = null,
     val log: String = "",
     val isError: Boolean = false,
+    val projectName: String = "",
 )
