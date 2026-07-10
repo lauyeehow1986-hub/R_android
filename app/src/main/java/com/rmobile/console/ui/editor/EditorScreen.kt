@@ -585,6 +585,9 @@ private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
                 )
             }
         }
+        items(uiState.tables) { table ->
+            RTableView(table)
+        }
         items(uiState.plotsBase64) { base64Png ->
             val bitmap = remember(base64Png) { decodeBase64Png(base64Png) }
             bitmap?.let {
