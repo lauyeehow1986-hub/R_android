@@ -473,6 +473,9 @@ function(req, res) {
   text <- if (!inherits(result, "error") && file.exists(out_text)) {
     paste(readLines(out_text, warn = FALSE), collapse = "\n")
   } else ""
+  # Rd2txt renders section titles with terminal overstrike (`_<BS>` underline and
+  # `X<BS>X` bold); strip those control sequences so the app gets plain text.
+  if (nzchar(text)) text <- gsub(".\010", "", text)
   pkg <- if (file.exists(out_pkg)) readLines(out_pkg, warn = FALSE)[1] else NULL
 
   list(topic = topic, packageName = pkg, text = text, found = nzchar(text))
