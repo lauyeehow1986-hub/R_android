@@ -22,4 +22,6 @@ data class EditorUiState(
     val history: List<HistoryEntry> = emptyList(),
     val savedScripts: List<SavedScript> = emptyList(),
     val workspaceObjects: List<String> = emptyList(),
+    val completionSymbols: List<String> = emptyList(),
+    val help: HelpState? = null,
 )

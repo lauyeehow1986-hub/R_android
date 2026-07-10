@@ -17,6 +17,7 @@ import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptLibrary
 import com.rmobile.console.data.scripts.SavedScriptStore
+import com.rmobile.console.ui.editor.completion.BaseRSymbols
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +35,9 @@ class EditorViewModel(
     private val _uiState: MutableStateFlow<EditorUiState>
     val uiState: StateFlow<EditorUiState>
 
+    private var symbolIndex: List<String> = emptyList()
+    private var packageNames: List<String> = emptyList()
+
     init {
         val loaded = projectStore.loadProjects()
         val projects = loaded.ifEmpty { listOf(ProjectOps.newProject(now(), "Untitled", now())) }
@@ -50,6 +54,7 @@ class EditorViewModel(
             ),
         )
         uiState = _uiState.asStateFlow()
+        refreshSymbols()
     }
 
     // --- editing ---
@@ -104,6 +109,7 @@ class EditorViewModel(
         val target = _uiState.value.projects.firstOrNull { it.id == id } ?: return
         projectStore.persistLastOpenProjectId(target.id)
         _uiState.update { it.copy(project = target, code = ProjectOps.activeContent(target)) }
+        refreshSymbols()
     }
 
     fun newProject(name: String) {
@@ -238,6 +244,8 @@ class EditorViewModel(
                             workspaceObjects = response.workspaceObjects ?: it.workspaceObjects,
                         )
                     }
+                    recomputeSymbols()
+                    refreshSymbols()
                 }
                 .onFailure { t ->
                     _uiState.update {
@@ -252,4 +260,42 @@ class EditorViewModel(
         historyStore.persist(updated)
         _uiState.update { it.copy(history = updated) }
     }
+
+    // --- code assist ---
+
+    private fun recomputeSymbols() {
+        val assembled = (BaseRSymbols.NAMES + _uiState.value.workspaceObjects + packageNames + symbolIndex)
+            .distinct()
+        _uiState.update { it.copy(completionSymbols = assembled) }
+    }
+
+    /** Refresh the cached symbol index + package names for the active project's session. */
+    fun refreshSymbols() {
+        val session = ProjectSession.of(_uiState.value.project)
+        viewModelScope.launch {
+            symbolIndex = repository.listSymbols(session).getOrNull().orEmpty()
+            packageNames = repository.listPackages(session).getOrNull()?.packages.orEmpty()
+            recomputeSymbols()
+        }
+    }
+
+    fun showHelp(topic: String) {
+        val t = topic.trim()
+        if (t.isEmpty()) return
+        val session = ProjectSession.of(_uiState.value.project)
+        _uiState.update { it.copy(help = HelpState.Loading(t)) }
+        viewModelScope.launch {
+            repository.help(t, session)
+                .onSuccess { resp ->
+                    _uiState.update {
+                        it.copy(help = if (resp.found) HelpState.Loaded(resp) else HelpState.NotFound(t))
+                    }
+                }
+                .onFailure { th ->
+                    _uiState.update { it.copy(help = HelpState.Error(t, th.message ?: "Failed to load help.")) }
+                }
+        }
+    }
+
+    fun dismissHelp() = _uiState.update { it.copy(help = null) }
 }
