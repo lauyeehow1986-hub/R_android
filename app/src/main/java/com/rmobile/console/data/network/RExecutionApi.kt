@@ -2,6 +2,8 @@ package com.rmobile.console.data.network
 
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.ImportLegacyRequest
+import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
@@ -12,6 +14,7 @@ import com.rmobile.console.data.model.UninstallResponse
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Query
 
 /** Talks to the R execution backend in /backend (see backend/README.md). */
 interface RExecutionApi {
@@ -28,5 +31,8 @@ interface RExecutionApi {
     suspend fun uninstall(@Body request: UninstallRequest): UninstallResponse
 
     @GET("packages")
-    suspend fun packages(): PackagesResponse
+    suspend fun packages(@Query("sessionId") sessionId: String): PackagesResponse
+
+    @POST("import-legacy")
+    suspend fun importLegacy(@Body request: ImportLegacyRequest): ImportLegacyResponse
 }

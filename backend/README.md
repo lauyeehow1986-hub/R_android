@@ -51,20 +51,29 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
   `source("helpers.R")` works. File names must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`;
   `code` and `files` are mutually exclusive (`files` wins if present).
 - `POST /reset` — body `{"sessionId": "default"}`, clears that session's saved
-  workspace and attached-package list. Returns `{"ok": true}`. Same auth /
-  rate-limit rules as `/execute`.
+  workspace and attached-package list. Optional `"purgePackages": true` also
+  deletes that session's installed-package library (`rlib`) — used when a
+  project is deleted. Returns `{"ok": true}`. Same auth / rate-limit rules as
+  `/execute`.
 - `POST /install` — body `{"package":"<name>"}`, installs a CRAN package into
-  the shared library. Returns `{"stdout","stderr","error","timedOut",
+  the active session's library. Optional `sessionId` (default `default`).
+  Returns `{"stdout","stderr","error","timedOut",
   "installed","systemRequirements"}`. Same auth / rate-limit rules as
   `/execute`; its own timeout (`R_INSTALL_TIMEOUT_SECONDS`, default 300s).
 - `POST /uninstall` — body `{"package":"<name>"}`, removes a package from the
-  shared library. Returns `{"removed","error"}` (`removed:true` only when the
-  package was present and is now gone; `removed:false` with no error for a
-  package that wasn't installed there). Same auth / rate-limit rules as
-  `/execute`. Only the writable `R_PKG_LIB` is touched — base and pre-baked
-  image packages are unaffected.
-- `GET /packages` — lists user-installed packages in the shared library
-  (`{"packages":[...]}`). Read-only, no auth.
+  active session's library. Optional `sessionId` (default `default`). Returns
+  `{"removed","error"}` (`removed:true` only when the package was present and
+  is now gone; `removed:false` with no error for a package that wasn't
+  installed there). Same auth / rate-limit rules as `/execute`. Only that
+  session's library is touched — base and pre-baked image packages are
+  unaffected.
+- `GET /packages` — lists user-installed packages in a session's library
+  (`{"packages":[...]}`). Takes an optional `?sessionId=` query param (default
+  `default`) — it's per-session, not a global shared list. Read-only, no auth.
+- `POST /import-legacy` — body `{"sessionId":"default"}`, copies packages from
+  the legacy shared library (`R_PKG_LIB`, now read-only) into that session's
+  library, skipping any already present. Returns `{"imported":<int>,"packages":[...]}`.
+  Same auth / rate-limit rules as `/execute`.
 - `GET /health` — liveness check (never requires auth).
 
 ## Durable sessions
@@ -74,21 +83,35 @@ Each session keeps `workspace.RData` (global-env objects) and `attached.txt`
 named volume in `docker-compose.yml`). The wrapper restores them before each
 run and saves them after a **successful** run, so a failed or timed-out run
 never overwrites good state. Only data/objects and attached packages persist —
-connections, external pointers, and `options()` do not.
+connections, external pointers, and `options()` do not. Each session also has
+its own installed-package library (`rlib`, see "Packages" below); `POST /reset`
+with `"purgePackages": true` deletes that library along with the workspace.
 
 ## Packages
 
-`POST /install` (body `{"package":"<name>"}`) installs a CRAN package into a
-shared, persistent library (`R_PKG_LIB`, default `/data/rlib`, a named volume)
-with a longer timeout (`R_INSTALL_TIMEOUT_SECONDS`, default 300s) from
-`R_CRAN_REPO`. Installed packages are prepended to `.libPaths()` for every run,
-so `library()` (and inline `install.packages()`) work. `GET /packages` lists
-them, and `POST /uninstall` (body `{"package":"<name>"}`) removes one from the
-shared library (base and pre-baked image packages are untouched). Common system
-libraries are baked into the image, so most popular packages
-install (as binaries, no compilation); a package needing an un-baked lib fails
-and `/install` returns the apt command to add it (rebuild the image) — there is
-no runtime apt, so the container stays non-root + read-only-root.
+`POST /install` (body `{"package":"<name>"}`, optional `sessionId`, default
+`default`) installs a CRAN package into that **session's own library**, at
+`R_SESSION_DIR/<sessionId>/rlib` — packages are isolated per session/project,
+not shared globally. Installs use a longer timeout
+(`R_INSTALL_TIMEOUT_SECONDS`, default 300s) from `R_CRAN_REPO`. A session's
+library is prepended to `.libPaths()` for its runs, so `library()` (and inline
+`install.packages()`) work. `GET /packages?sessionId=` lists a session's
+installed packages, and `POST /uninstall` (body `{"package":"<name>"}`,
+optional `sessionId`) removes one from that session's library (base and
+pre-baked image packages are untouched).
+
+The pre-multi-session shared library (`R_PKG_LIB`, default `/data/rlib`) is
+still mounted, but now **read-only** — it's a legacy source, not a live
+install target. `POST /import-legacy` (body `{"sessionId":"default"}`) copies
+packages from it into a session's own library on demand, skipping any already
+present there.
+
+Common system libraries are baked into the image, so most popular packages
+install (as binaries, no compilation) into any session's library; a package
+needing an un-baked lib fails and `/install` returns the apt command to add it
+(rebuild the image) — there is no runtime apt, so the container stays non-root
++ read-only-root. Base and pre-baked image packages are available read-only to
+every session regardless of which session's library they were built for.
 
 ## Hardened deployment
 
@@ -150,13 +173,20 @@ own dev machine:
 - **Disk quota isn't enforced** beyond the OS temp cleanup — a script that
   fills the tmpfs before its timeout fires could still cause problems.
 - **`/install` runs arbitrary package code** (same RCE surface as `/execute`)
-  and writes to a globally shared, unbounded library — a trojaned package
-  persists for all sessions. It is auth/rate-limited and the package name is
-  restricted to `^[A-Za-z0-9._]+$`.
+  and writes to that session's own library — a trojaned package is now
+  confined to the session that installed it, rather than persisting for every
+  session as it did with the old shared library. Per-session libraries are
+  still unbounded/unevicted (the disk-quota caveat above applies per session
+  now, not just globally). `/import-legacy` copies packages from the old
+  shared library (`R_PKG_LIB`, now read-only) into a session on request — a
+  compromised legacy package would propagate to any session that imports it,
+  same as before for that path. It is auth/rate-limited and the package name
+  is restricted to `^[A-Za-z0-9._]+$`.
 - **Session state is unbounded and attacker-writable.** Persisted workspaces
-  can grow without limit and hold arbitrary user data; there is no per-session
-  quota or eviction yet. The `sessionId` is sanitized to `[A-Za-z0-9_-]` — keep
-  that guard if you add real multi-session support.
+  (and now per-session package libraries) can grow without limit and hold
+  arbitrary user data; there is no per-session quota or eviction yet. The
+  `sessionId` is sanitized to `[A-Za-z0-9_-]` — keep that guard if you extend
+  multi-session support further.
 
 Treat this as a working MVP for local development, not a hardened multi-user
 service.

@@ -45,10 +45,11 @@ local_server <- function(env = list(), .local_envir = parent.frame()) {
 
 # Perform a request; returns list(status, body) and does NOT error on 4xx/5xx so
 # tests can assert on 400/401/413/429. `body` is the JSON-decoded response.
-api_request <- function(server, path, body = NULL, key = NULL) {
+api_request <- function(server, path, body = NULL, key = NULL, query = NULL) {
   req <- request(server$base_url) |>
     req_url_path(path) |>
     req_error(is_error = function(resp) FALSE)
+  if (!is.null(query)) req <- req_url_query(req, !!!query)
   if (!is.null(body)) req <- req_body_json(req, body)
   if (!is.null(key)) req <- req_headers(req, "X-API-Key" = key)
   resp <- req_perform(req)
@@ -66,6 +67,17 @@ post_execute <- function(server, code, key = NULL, session_id = NULL) {
 
 post_reset <- function(server, session_id = "default", key = NULL) {
   api_request(server, "/reset", body = list(sessionId = session_id), key = key)
+}
+
+post_install <- function(server, package, key = NULL, session_id = NULL) {
+  body <- list(package = package)
+  if (!is.null(session_id)) body$sessionId <- session_id
+  api_request(server, "/install", body = body, key = key)
+}
+
+get_packages <- function(server, session_id = NULL, key = NULL) {
+  query <- if (!is.null(session_id)) list(sessionId = session_id) else NULL
+  api_request(server, "/packages", query = query, key = key)
 }
 
 get_health <- function(server) api_request(server, "/health")

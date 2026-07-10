@@ -114,6 +114,15 @@ Retrofit client, not worth a framework yet):
   manifest via the pure, tested `ProjectArchive`; `ProjectsScreen` exports through
   the share-sheet (`shareProjectZip`) and imports via a SAF picker →
   `EditorViewModel.importProject` (imports create a new project).
+  `data/project/ProjectSession.of(project)` is the single project→backend-session
+  mapping (`sessionId = "proj-<project.id>"`); opening a project switches the
+  active backend session automatically, since `EditorViewModel.runCode()`/
+  `resetSession()` derive the session from the currently-active project rather
+  than a fixed id. Deleting a project fires a best-effort backend
+  `reset(purgePackages = true)` for that project's session, so its workspace and
+  package library get purged along with the local project. `PackagesViewModel`
+  resolves the active project's session (via `ProjectStore`) and scopes
+  install/uninstall/list to it.
 - The **build-time** default backend URL still lives in
   `app/build.gradle.kts` → `buildConfigField` (overridable with
   `-PrExecutionBaseUrl=...`); it's the fallback until the user overrides it in
@@ -163,13 +172,21 @@ vectors serialize as scalars (matching the Kotlin models) and NULL becomes
 JSON null — without this, plumber array-wraps every scalar and the app can't
 parse responses.
 
-**Packages**: the wrapper also prepends a shared library `R_PKG_LIB` (default
-`/data/rlib`, its own read-write named volume) to `.libPaths()`, so `library()`
-and inline `install.packages()` see installed packages. `POST /install` (body
-`{"package"}`, name-validated, its own `R_INSTALL_TIMEOUT_SECONDS`) installs into
-that lib in an isolated subprocess and reports `installed`/`systemRequirements`;
-`GET /packages` lists them. Common package system libraries are pre-baked into
-the image (no runtime apt — the container stays hardened).
+**Packages**: package libraries are now **per-session** — the wrapper prepends
+`SESSION_DIR/<id>/rlib` (a subdirectory of the same read-write session volume,
+created on demand) to `.libPaths()`, so `library()` and inline
+`install.packages()` see only that session's (i.e. that project's) installed
+packages. `POST /install` (body `{"package", "sessionId"}`, name-validated, its
+own `R_INSTALL_TIMEOUT_SECONDS`) installs into that session's lib in an isolated
+subprocess and reports `installed`/`systemRequirements`; `POST /uninstall` takes
+the same `sessionId`; `GET /packages` takes a `?sessionId=` query param
+(default `"default"`) and lists that session's library. The old shared library
+constant, `R_PKG_LIB` (default `/data/rlib`), still exists but is now
+`LEGACY_PKG_LIB` — a **read-only** (mounted `:ro`) source of pre-multi-session
+packages. `POST /import-legacy` (body `{"sessionId"}`) copies packages from the
+legacy lib into a session's own lib, skipping ones already present, and returns
+`{"imported": <int>, "packages": [...]}`. Common package system libraries are
+pre-baked into the image (no runtime apt — the container stays hardened).
 
 The Dockerfile/`docker-compose.yml` run this as an unprivileged user with a
 read-only root filesystem, dropped capabilities, and CPU/memory limits. A
@@ -190,25 +207,35 @@ here have different stakes than changes to the Android UI.
 `ExecuteRequest`/`ExecuteResponse`/`ResetRequest`/`ResetResponse` in
 `app/src/main/java/com/rmobile/console/data/model/ExecuteModels.kt`
 (kotlinx.serialization) must stay in sync field-for-field with the JSON
-returned by `plumber.R`. `/execute`: request `code` + optional `sessionId`, OR a
-multi-file project `files` (`[{name,content}]`) + `entryFile` (backend writes the
-files and `source()`s the entry; `files` wins over `code`); response `stdout`,
-`stderr`, `plots`, `tables`, `error`, `timedOut`, `workspaceObjects` (nullable).
-`tables` (`RTable(columns, columnTypes, rows, totalRows)`) holds any data
-frame/tibble/data.table/matrix/2-D `table` **printed at the entry's top level** —
-the wrapper runs top-level expressions through a `withVisible` eval loop
-(instead of bare `source()`) and emits `inherits(., "data.frame")`/2-D values as
-`table*.json` side-channel files (rows capped at `R_TABLE_MAX_ROWS`, default
-200); prints inside functions/`source()`d files aren't captured. `/reset`:
-request `sessionId`, response `ok`. `/install`
-(`InstallRequest`/`InstallResponse`, in `data/model/PackageModels.kt`): request
-`package` (Kotlin property `packageName` via `@SerialName("package")`), response
+returned by `plumber.R`. Every project now maps to its own backend session —
+the app sends `sessionId = "proj-<project.id>"` (derived by
+`ProjectSession.of(project)`) per project, so each project gets an isolated
+workspace **and** package library. `/execute`: request `code` + optional
+`sessionId`, OR a multi-file project `files` (`[{name,content}]`) + `entryFile`
+(backend writes the files and `source()`s the entry; `files` wins over `code`);
+response `stdout`, `stderr`, `plots`, `tables`, `error`, `timedOut`,
+`workspaceObjects` (nullable). `tables` (`RTable(columns, columnTypes, rows,
+totalRows)`) holds any data frame/tibble/data.table/matrix/2-D `table`
+**printed at the entry's top level** — the wrapper runs top-level expressions
+through a `withVisible` eval loop (instead of bare `source()`) and emits
+`inherits(., "data.frame")`/2-D values as `table*.json` side-channel files
+(rows capped at `R_TABLE_MAX_ROWS`, default 200); prints inside
+functions/`source()`d files aren't captured. `/reset`: request `sessionId` +
+optional `purgePackages` (also deletes that session's package library),
+response `ok`. `/install` (`InstallRequest`/`InstallResponse`, in
+`data/model/PackageModels.kt`): request `package` (Kotlin property
+`packageName` via `@SerialName("package")`) + nullable `sessionId`, response
 `stdout`/`stderr`/`error`/`timedOut`/`installed`/`systemRequirements`.
 `/uninstall` (`UninstallRequest`/`UninstallResponse`): request `package` (same
-`@SerialName` renaming), response `removed`/`error`. `/packages` →
-`PackagesResponse(packages)`. `/execute`, `/reset`, `/install`, and `/uninstall`
-are the auth/rate-limit-protected endpoints (`is_protected` in `plumber.R`).
-There's no shared schema file — if
+`@SerialName` renaming) + nullable `sessionId`, response `removed`/`error`.
+`/packages` takes a `?sessionId=` query param (default `"default"`) and lists
+that session's library → `PackagesResponse(packages)`. `/import-legacy`
+(`ImportLegacyRequest`/`ImportLegacyResponse`, in `data/model/PackageModels.kt`):
+request `sessionId`, response `imported` (count) + `packages` (names copied
+in) — copies packages from the old shared/legacy library into a session's own
+library, skipping ones already present. `/execute`, `/reset`, `/install`,
+`/uninstall`, and `/import-legacy` are the auth/rate-limit-protected endpoints
+(`is_protected` in `plumber.R`). There's no shared schema file — if
 you add a field on one side, add it on the other by hand, and remember the
 backend must emit **unboxed** JSON (see `run.R`) or scalar fields won't
 deserialize.
@@ -221,13 +248,20 @@ run-history sheet; a Settings screen for the backend URL + API key at runtime;
 clipboard/plot sharing; a **durable R session** (workspace + attached packages
 persist across runs/restarts, with a workspace summary and a reset action);
 **CRAN package installation and removal** (a Packages screen + `/install` /
-`/uninstall` / `/packages`, into a shared persistent library); JVM unit tests (`app/src/test/`) and backend
+`/uninstall` / `/packages`, into a persistent per-session library); JVM unit tests (`app/src/test/`) and backend
 integration tests (`backend/tests/`, testthat) plus GitHub Actions CI; and
 optional API-key auth + per-IP rate limiting on the backend.
 
 Also built: **CRAN package installation** (Packages screen + `/install`) and
 **multi-file projects** (named projects of `.R` files with a file switcher and a
 pinned entry, a project library, and `files`/`entryFile` execution).
+
+Also built: **per-project R environments** — each project maps to its own
+backend session (`ProjectSession.of(project)`), giving it an isolated workspace
+*and* package library (`SESSION_DIR/<id>/rlib`) instead of one shared session/
+library for the whole app; packages from the old shared library can be pulled
+into a project's library on demand via "Import packages from legacy library"
+(`/import-legacy`).
 
 Still **not** built — don't assume these exist: on-device execution, and
 network-egress restriction or per-request VM isolation on the backend.

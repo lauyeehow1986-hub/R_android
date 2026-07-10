@@ -41,6 +41,7 @@ data class ExecuteResponse(
 @Serializable
 data class ResetRequest(
     val sessionId: String? = null,
+    val purgePackages: Boolean = false,
 )
 
 @Serializable
