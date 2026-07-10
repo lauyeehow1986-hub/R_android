@@ -3,6 +3,8 @@ package com.rmobile.console.ui.packages
 import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.ImportLegacyRequest
+import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
@@ -36,7 +38,8 @@ class PackagesViewModelTest {
         override suspend fun reset(request: ResetRequest): ResetResponse = ResetResponse(ok = true)
         override suspend fun install(request: InstallRequest): InstallResponse = installResponse
         override suspend fun uninstall(request: UninstallRequest): UninstallResponse = uninstallResponse
-        override suspend fun packages(): PackagesResponse = packagesResponse
+        override suspend fun packages(sessionId: String): PackagesResponse = packagesResponse
+        override suspend fun importLegacy(request: ImportLegacyRequest): ImportLegacyResponse = ImportLegacyResponse()
     }
 
     private fun viewModel(api: FakeApi) = PackagesViewModel(RExecutionRepository(api))

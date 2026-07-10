@@ -3,6 +3,8 @@ package com.rmobile.console.data
 import com.rmobile.console.data.model.ExecFile
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.ImportLegacyRequest
+import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
@@ -25,17 +27,23 @@ class RExecutionRepository(
     ): Result<ExecuteResponse> =
         runCatching { api.execute(ExecuteRequest(sessionId = sessionId, files = files, entryFile = entryFile)) }
 
-    suspend fun reset(sessionId: String = DEFAULT_SESSION_ID): Result<ResetResponse> =
-        runCatching { api.reset(ResetRequest(sessionId)) }
+    suspend fun reset(
+        sessionId: String = DEFAULT_SESSION_ID,
+        purgePackages: Boolean = false,
+    ): Result<ResetResponse> =
+        runCatching { api.reset(ResetRequest(sessionId, purgePackages)) }
 
-    suspend fun install(packageName: String): Result<InstallResponse> =
-        runCatching { api.install(InstallRequest(packageName)) }
+    suspend fun install(packageName: String, sessionId: String = DEFAULT_SESSION_ID): Result<InstallResponse> =
+        runCatching { api.install(InstallRequest(packageName, sessionId)) }
 
-    suspend fun uninstall(packageName: String): Result<UninstallResponse> =
-        runCatching { api.uninstall(UninstallRequest(packageName)) }
+    suspend fun uninstall(packageName: String, sessionId: String = DEFAULT_SESSION_ID): Result<UninstallResponse> =
+        runCatching { api.uninstall(UninstallRequest(packageName, sessionId)) }
 
-    suspend fun listPackages(): Result<PackagesResponse> =
-        runCatching { api.packages() }
+    suspend fun listPackages(sessionId: String = DEFAULT_SESSION_ID): Result<PackagesResponse> =
+        runCatching { api.packages(sessionId) }
+
+    suspend fun importLegacy(sessionId: String = DEFAULT_SESSION_ID): Result<ImportLegacyResponse> =
+        runCatching { api.importLegacy(ImportLegacyRequest(sessionId)) }
 
     companion object {
         const val DEFAULT_SESSION_ID = "default"

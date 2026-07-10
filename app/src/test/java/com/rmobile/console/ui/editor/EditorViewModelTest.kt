@@ -5,6 +5,8 @@ import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.ImportLegacyRequest
+import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
@@ -49,7 +51,8 @@ class EditorViewModelTest {
         override suspend fun reset(request: ResetRequest): ResetResponse = ResetResponse(ok = true)
         override suspend fun install(request: InstallRequest): InstallResponse = InstallResponse(installed = true)
         override suspend fun uninstall(request: UninstallRequest): UninstallResponse = UninstallResponse(removed = true)
-        override suspend fun packages(): PackagesResponse = PackagesResponse()
+        override suspend fun packages(sessionId: String): PackagesResponse = PackagesResponse()
+        override suspend fun importLegacy(request: ImportLegacyRequest): ImportLegacyResponse = ImportLegacyResponse()
     }
 
     private class InMemoryHistoryStore(initial: List<HistoryEntry> = emptyList()) : HistoryStore {
