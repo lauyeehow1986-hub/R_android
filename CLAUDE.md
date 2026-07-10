@@ -95,6 +95,24 @@ Retrofit client, not worth a framework yet):
   that bypasses the host-rewriting interceptor, so an unsaved URL can be
   checked). `SettingsViewModel` depends on the `AppSettings` interface (not the
   concrete `SettingsStore`) so it's unit-testable without SharedPreferences.
+- `ui/data/` — **session data import**: `DataScreen` (Compose UI: an "Upload file"
+  button launching a SAF `OpenDocument` picker, an uploading spinner, and a
+  `LazyColumn` of the session's files with human-readable sizes, an "Insert" button,
+  and a delete affordance) driven by `DataViewModel` (`StateFlow<DataUiState>`,
+  session-scoped exactly like `PackagesViewModel` — it resolves the active project's
+  session via `ProjectStore` in `init`, so the screen just does `viewModel()`).
+  Uploads **stream** from the picked `Uri` — `data/network/UriRequestBody` is an
+  OkHttp `RequestBody` that reopens `contentResolver.openInputStream(uri)` on each
+  `writeTo` (never buffering the whole file into a `ByteArray`), sent as a
+  `MultipartBody.Part` over `NetworkModule.rDataApi` (a **separate** OkHttp client
+  with `callTimeout(0)`/`writeTimeout(0)` so a large LAN upload isn't aborted, but
+  sharing the same `HostSelectionInterceptor` so the runtime URL + API key still
+  apply). `formatByteSize` (`ui/data/ByteSize.kt`) is a pure, unit-tested B/KB/MB/GB
+  formatter. Tapping "Insert" calls `EditorViewModel.insertText(name)` (appends the
+  quoted filename on its own line via `onCodeChanged`, so the active project file
+  mirrors it) and returns to the editor. The Data screen is reached from a "Data
+  files" item in the editor's overflow menu and shares the one hoisted
+  `EditorViewModel` (like Packages/Projects).
 - Plot sharing (`ui/editor/PlotSharing.kt`) writes a decoded PNG to
   `cacheDir/shared` and opens a share sheet via a `FileProvider` declared in the
   manifest (`res/xml/file_paths.xml`); "Copy output" uses the Compose clipboard.
@@ -251,9 +269,25 @@ exports — → `SymbolsResponse(symbols)` (`data/model/AssistModels.kt`). `/hel
 (`HelpRequest`/`HelpResponse`, same file): request `topic` (validated
 `^[A-Za-z0-9._]+$`, else `400`) + nullable `sessionId`, response `topic` /
 `packageName` (nullable) / `text` (the `tools::Rd2txt`-rendered help) / `found`.
+**Session data files** (models in `data/model/DataModels.kt`): `POST /upload`
+(multipart/form-data, one part named `file`; `sessionId` is a **query param** so
+multipart parsing only handles the file) validates the filename
+(`basename` → sanitize to `[A-Za-z0-9._-]` → reject empty/reserved
+`script.R`/`objects.txt`/`main.R`/`plot###.png`/`table###.json`, `400` on reject),
+caps size at `R_UPLOAD_MAX_BYTES` (default 1 GiB, `413` on over-cap), writes into
+the session's `data/` dir → `UploadResponse(name, size)`; `GET /data?sessionId=`
+→ `DataFilesResponse(files: [DataFile(name, size)])` sorted by name; `POST
+/delete-data` (JSON `{name, sessionId?}`) → `DeleteDataResponse(removed)`.
+`session_paths()` gained `$data = <dir>/data`; `/execute` **symlinks** (not
+copies — a 1 GB dataset isn't re-copied per run) each data file into the ephemeral
+run dir *before* writing the harness/entry files (so a run's own files always
+shadow a same-named data file), making them readable by bare name
+(`read.csv("sales.csv")`); `/reset` also `unlink`s `$data`. The container
+`mem_limit` was raised to `2g` because plumber buffers the whole multipart body in
+memory (operators lowering `R_UPLOAD_MAX_BYTES` can lower it in step).
 `/execute`, `/reset`, `/install`, `/uninstall`, `/import-legacy`, `/symbols`,
-and `/help` are the auth/rate-limit-protected endpoints
-(`is_protected` in `plumber.R`). There's no shared schema file — if
+`/help`, `/upload`, `/data`, and `/delete-data` are the auth/rate-limit-protected
+endpoints (`is_protected` in `plumber.R`). There's no shared schema file — if
 you add a field on one side, add it on the other by hand, and remember the
 backend must emit **unboxed** JSON (see `run.R`) or scalar fields won't
 deserialize.
@@ -286,6 +320,14 @@ by a hybrid symbol set: baked base-R names + workspace objects + installed-packa
 names + a cached backend `/symbols` index, filtered off the main thread) and
 in-app **R help** (`/help` → `tools::Rd2txt` text in a bottom sheet, reached from
 completion chips and a `?` help search).
+
+Also built: **session data import** — upload arbitrary files (opaque bytes) from the
+phone into a project's session (`POST /upload`, streamed from a SAF `Uri` via
+`UriRequestBody` so app memory stays flat) and manage them from a dedicated **Data**
+screen (`/data` list, `/delete-data`). Uploaded files are symlinked into each
+`/execute` run dir, so code reads them by bare name; they're per-project (they live
+under the project's session) and cleared on session reset / project deletion.
+Tap-to-insert drops a file's quoted name into the editor.
 
 Still **not** built — don't assume these exist: on-device execution, and
 network-egress restriction or per-request VM isolation on the backend.
