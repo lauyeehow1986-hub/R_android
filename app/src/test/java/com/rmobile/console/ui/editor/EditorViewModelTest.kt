@@ -58,6 +58,9 @@ class EditorViewModelTest {
         override suspend fun uninstall(request: UninstallRequest): UninstallResponse = UninstallResponse(removed = true)
         override suspend fun packages(sessionId: String): PackagesResponse = PackagesResponse()
         override suspend fun importLegacy(request: ImportLegacyRequest): ImportLegacyResponse = ImportLegacyResponse()
+        override suspend fun symbols(sessionId: String) = com.rmobile.console.data.model.SymbolsResponse()
+        override suspend fun help(request: com.rmobile.console.data.model.HelpRequest) =
+            com.rmobile.console.data.model.HelpResponse()
     }
 
     private class InMemoryHistoryStore(initial: List<HistoryEntry> = emptyList()) : HistoryStore {
