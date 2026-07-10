@@ -51,7 +51,11 @@ fun PackagesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Packages") },
+                title = {
+                    Text(
+                        if (uiState.projectName.isNotBlank()) "Packages · ${uiState.projectName}" else "Packages"
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -89,6 +93,10 @@ fun PackagesScreen(
                         Text("Install")
                     }
                 }
+            }
+
+            TextButton(onClick = viewModel::importLegacy) {
+                Text("Import packages from legacy library")
             }
 
             uiState.message?.let { message ->
