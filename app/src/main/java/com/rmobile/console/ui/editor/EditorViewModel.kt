@@ -109,8 +109,10 @@ class EditorViewModel(
     fun openProject(id: Long) {
         val target = _uiState.value.projects.firstOrNull { it.id == id } ?: return
         projectStore.persistLastOpenProjectId(target.id)
-        _uiState.update { it.copy(project = target, code = ProjectOps.activeContent(target)) }
-        refreshSymbols()
+        _uiState.update {
+            it.copy(project = target, code = ProjectOps.activeContent(target), workspaceObjects = emptyList())
+        }
+        onActiveProjectChanged()
     }
 
     fun newProject(name: String) {
@@ -118,7 +120,10 @@ class EditorViewModel(
         val updated = ProjectOps.upsert(_uiState.value.projects, created)
         projectStore.persistProjects(updated)
         projectStore.persistLastOpenProjectId(created.id)
-        _uiState.update { it.copy(projects = updated, project = created, code = ProjectOps.activeContent(created)) }
+        _uiState.update {
+            it.copy(projects = updated, project = created, code = ProjectOps.activeContent(created), workspaceObjects = emptyList())
+        }
+        onActiveProjectChanged()
     }
 
     fun renameProject(id: Long, name: String) {
@@ -138,6 +143,7 @@ class EditorViewModel(
         _uiState.value.projects.firstOrNull { it.id == id }?.let { victim ->
             viewModelScope.launch { repository.reset(ProjectSession.of(victim), purgePackages = true) }
         }
+        val wasActive = _uiState.value.project.id == id
         var remaining = ProjectOps.delete(_uiState.value.projects, id)
         if (remaining.isEmpty()) remaining = listOf(ProjectOps.newProject(now(), "Untitled", now()))
         projectStore.persistProjects(remaining)
@@ -145,11 +151,12 @@ class EditorViewModel(
             if (state.project.id == id) {
                 val next = remaining.first()
                 projectStore.persistLastOpenProjectId(next.id)
-                state.copy(projects = remaining, project = next, code = ProjectOps.activeContent(next))
+                state.copy(projects = remaining, project = next, code = ProjectOps.activeContent(next), workspaceObjects = emptyList())
             } else {
                 state.copy(projects = remaining)
             }
         }
+        if (wasActive) onActiveProjectChanged()
     }
 
     /** Imports a project from a `.zip`'s bytes, adding it to the library and opening it. */
@@ -167,9 +174,11 @@ class EditorViewModel(
                 projects = updated,
                 project = imported,
                 code = ProjectOps.activeContent(imported),
+                workspaceObjects = emptyList(),
                 errorMessage = null,
             )
         }
+        onActiveProjectChanged()
     }
 
     private fun persistProject(project: Project) {
@@ -268,6 +277,18 @@ class EditorViewModel(
         val assembled = (BaseRSymbols.NAMES + _uiState.value.workspaceObjects + packageNames + symbolIndex)
             .distinct()
         _uiState.update { it.copy(completionSymbols = assembled) }
+    }
+
+    /**
+     * The active project changed: drop the previous project's symbol/package caches
+     * immediately (so its completions can't bleed into the new project), recompute
+     * against the now-empty caches, then refetch this project's session.
+     */
+    private fun onActiveProjectChanged() {
+        symbolIndex = emptyList()
+        packageNames = emptyList()
+        recomputeSymbols()
+        refreshSymbols()
     }
 
     /** Refresh the cached symbol index + package names for the active project's session. */

@@ -356,4 +356,21 @@ class EditorViewModelTest {
         advanceUntilIdle()            // the in-flight response now completes
         assertEquals(null, vm.uiState.value.help) // must not resurface the sheet
     }
+
+    @Test
+    fun `switching to a new project drops the old symbol set and refreshes`() = runTest {
+        val api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("old_var")))
+        api.symbolsResponse = com.rmobile.console.data.model.SymbolsResponse(listOf("fresh_sym"))
+        val vm = viewModel(api = api)
+        vm.runCode()                  // populate project A's workspace objects
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.completionSymbols.contains("old_var"))
+
+        vm.newProject("B")
+        // Old project's workspace-derived completions are dropped synchronously.
+        assertFalse(vm.uiState.value.completionSymbols.contains("old_var"))
+        advanceUntilIdle()
+        // The new project's session index is refetched.
+        assertTrue(vm.uiState.value.completionSymbols.contains("fresh_sym"))
+    }
 }
