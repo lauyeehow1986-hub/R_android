@@ -35,17 +35,19 @@ session_paths <- function(session_id) {
   list(
     dir = dir,
     workspace = file.path(dir, "workspace.RData"),
-    attached = file.path(dir, "attached.txt")
+    attached = file.path(dir, "attached.txt"),
+    rlib = file.path(dir, "rlib")
   )
 }
 
-# Shared, persistent package library (its own volume in prod).
-PKG_LIB <- Sys.getenv("R_PKG_LIB", "/data/rlib")
+# Legacy shared library from before per-session libraries. Read-only source for
+# POST /import-legacy; nothing is installed here anymore.
+LEGACY_PKG_LIB <- Sys.getenv("R_PKG_LIB", "/data/rlib")
 INSTALL_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_INSTALL_TIMEOUT_SECONDS", "300"))
 CRAN_REPO <- Sys.getenv("R_CRAN_REPO", "https://packagemanager.posit.co/cran/__linux__/jammy/latest")
 
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -157,6 +159,7 @@ function(req, res) {
   session_id <- sanitize_session_id(body$sessionId)
   paths <- session_paths(session_id)
   dir.create(paths$dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(paths$rlib, recursive = TRUE, showWarnings = FALSE)
   objects_path <- file.path(run_dir, "objects.txt")
 
   attached_literal <- paste(deparse(DEFAULT_ATTACHED), collapse = "")
@@ -166,7 +169,7 @@ function(req, res) {
   # Before user code: restore the saved workspace + attached packages (if any).
   # After user code: persist workspace + attached-package list back to the session dir.
   wrapped <- c(
-    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(PKG_LIB)),
+    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(paths$rlib)),
     sprintf(
       'tryCatch(if (file.exists(%s)) load(%s, envir = globalenv()), error = function(e) try(file.rename(%s, %s), silent = TRUE))',
       shQuote(paths$workspace), shQuote(paths$workspace),
@@ -266,7 +269,7 @@ function(req, res) {
   list(ok = TRUE)
 }
 
-#* Install a CRAN package into the shared library
+#* Install a CRAN package into a session's library
 #* @post /install
 function(req, res) {
   body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
@@ -277,16 +280,18 @@ function(req, res) {
                 timedOut = FALSE, installed = FALSE, systemRequirements = NULL))
   }
 
-  dir.create(PKG_LIB, recursive = TRUE, showWarnings = FALSE)
+  session_id <- sanitize_session_id(body$sessionId)
+  lib <- session_paths(session_id)$rlib
+  dir.create(lib, recursive = TRUE, showWarnings = FALSE)
   run_dir <- file.path(tempdir(), paste0("install-", format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", sample.int(1e6, 1)))
   dir.create(run_dir, recursive = TRUE)
   on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
   script_path <- file.path(run_dir, "install.R")
 
   writeLines(c(
-    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(PKG_LIB)),
+    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(lib)),
     'options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(), paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))',
-    sprintf('install.packages(%s, repos = %s, lib = %s)', shQuote(pkg), shQuote(CRAN_REPO), shQuote(PKG_LIB))
+    sprintf('install.packages(%s, repos = %s, lib = %s)', shQuote(pkg), shQuote(CRAN_REPO), shQuote(lib))
   ), script_path)
 
   result <- tryCatch(
@@ -301,7 +306,7 @@ function(req, res) {
                 timedOut = timed_out, installed = FALSE, systemRequirements = NULL))
   }
 
-  installed <- pkg %in% rownames(installed.packages(lib.loc = PKG_LIB))
+  installed <- pkg %in% rownames(installed.packages(lib.loc = lib))
 
   sysreqs <- NULL
   if (!installed && requireNamespace("remotes", quietly = TRUE)) {
@@ -321,7 +326,7 @@ function(req, res) {
   )
 }
 
-#* Uninstall a package from the shared library
+#* Uninstall a package from a session's library
 #* @post /uninstall
 function(req, res) {
   body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
@@ -330,12 +335,13 @@ function(req, res) {
     res$status <- 400
     return(list(removed = FALSE, error = "Invalid or missing 'package' name."))
   }
-  before <- pkg %in% rownames(installed.packages(lib.loc = PKG_LIB))
+  lib <- session_paths(sanitize_session_id(body$sessionId))$rlib
+  before <- pkg %in% rownames(installed.packages(lib.loc = lib))
   err <- tryCatch({
-    if (before) suppressWarnings(remove.packages(pkg, lib = PKG_LIB))
+    if (before) suppressWarnings(remove.packages(pkg, lib = lib))
     NULL
   }, error = function(e) conditionMessage(e))
-  after <- pkg %in% rownames(installed.packages(lib.loc = PKG_LIB))
+  after <- pkg %in% rownames(installed.packages(lib.loc = lib))
   list(removed = before && !after, error = err)
 }
 
@@ -345,10 +351,11 @@ function() {
   list(status = "ok")
 }
 
-#* List user-installed packages in the shared library
+#* List user-installed packages in a session's library
 #* @get /packages
-function() {
-  pkgs <- tryCatch(rownames(installed.packages(lib.loc = PKG_LIB)), error = function(e) NULL)
+function(sessionId = "default") {
+  lib <- session_paths(sanitize_session_id(sessionId))$rlib
+  pkgs <- tryCatch(rownames(installed.packages(lib.loc = lib)), error = function(e) NULL)
   if (is.null(pkgs)) pkgs <- character(0)
   list(packages = as.list(pkgs))
 }
