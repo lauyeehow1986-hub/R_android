@@ -45,3 +45,20 @@ class EditorTextOpsTest {
         assertEquals(1, result.cursor)
     }
 }
+
+class EditorTextOpsReplaceRangeTest {
+
+    @Test
+    fun `replaceRange swaps the token and places the cursor after it`() {
+        val result = replaceRange("x <- mea", 5 until 8, "mean")
+        assertEquals("x <- mean", result.text)
+        assertEquals(9, result.cursor) // just after "mean"
+    }
+
+    @Test
+    fun `replaceRange works mid-string`() {
+        val result = replaceRange("a + su + b", 4 until 6, "sum")
+        assertEquals("a + sum + b", result.text)
+        assertEquals(7, result.cursor)
+    }
+}

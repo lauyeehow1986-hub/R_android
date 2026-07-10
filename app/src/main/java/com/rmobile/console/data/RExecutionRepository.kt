@@ -3,6 +3,8 @@ package com.rmobile.console.data
 import com.rmobile.console.data.model.ExecFile
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.HelpRequest
+import com.rmobile.console.data.model.HelpResponse
 import com.rmobile.console.data.model.ImportLegacyRequest
 import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
@@ -10,6 +12,7 @@ import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
+import com.rmobile.console.data.model.SymbolsResponse
 import com.rmobile.console.data.model.UninstallRequest
 import com.rmobile.console.data.model.UninstallResponse
 import com.rmobile.console.data.network.RExecutionApi
@@ -44,6 +47,12 @@ class RExecutionRepository(
 
     suspend fun importLegacy(sessionId: String = DEFAULT_SESSION_ID): Result<ImportLegacyResponse> =
         runCatching { api.importLegacy(ImportLegacyRequest(sessionId)) }
+
+    suspend fun listSymbols(sessionId: String = DEFAULT_SESSION_ID): Result<List<String>> =
+        runCatching { api.symbols(sessionId).symbols }
+
+    suspend fun help(topic: String, sessionId: String = DEFAULT_SESSION_ID): Result<HelpResponse> =
+        runCatching { api.help(HelpRequest(topic, sessionId)) }
 
     companion object {
         const val DEFAULT_SESSION_ID = "default"

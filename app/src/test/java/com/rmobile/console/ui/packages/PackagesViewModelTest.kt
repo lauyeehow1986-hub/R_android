@@ -57,6 +57,9 @@ class PackagesViewModelTest {
             lastImportLegacySessionId = request.sessionId
             return importLegacyResponse
         }
+        override suspend fun symbols(sessionId: String) = com.rmobile.console.data.model.SymbolsResponse()
+        override suspend fun help(request: com.rmobile.console.data.model.HelpRequest) =
+            com.rmobile.console.data.model.HelpResponse()
     }
 
     private class InMemoryProjectStore(initial: List<Project> = emptyList(), var lastId: Long? = null) : ProjectStore {

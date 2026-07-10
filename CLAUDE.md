@@ -75,9 +75,20 @@ Retrofit client, not worth a framework yet):
   never from the composable). The editor field uses a local `TextFieldValue`
   synced from `uiState.code`, so cursor-aware inserts and history/script loads
   both work. Pure, unit-tested helpers: `RSyntaxHighlighter` (tokenizer, wrapped
-  by the `RCodeVisualTransformation`), `insertAt` (`EditorTextOps`), and
-  `SavedScriptLibrary` (`data/scripts/`, list ops for named scripts persisted
-  via `SettingsStore`).
+  by the `RCodeVisualTransformation`), `insertAt`/`replaceRange` (`EditorTextOps`),
+  and `SavedScriptLibrary` (`data/scripts/`, list ops for named scripts persisted
+  via `SettingsStore`). **Code assist**: an autocomplete **suggestion strip**
+  (`SuggestionStrip`, above the operator bar) shows completions for the identifier
+  under the cursor — derived off `Dispatchers.Default` with a 120ms `debounce` over
+  a `snapshotFlow` of the editor field, against `uiState.completionSymbols`
+  (assembled in `EditorViewModel` from the pure, unit-tested `completion/CompletionOps`
+  + baked `BaseRSymbols`, the session `workspaceObjects`, installed-package names,
+  and a cached backend `/symbols` index refreshed on run/project-open/packages-return
+  via `refreshSymbols()`, which guards against stale-session results). Tapping a chip
+  inserts (`replaceRange`); long-pressing a chip, tapping the leading `? <token>`
+  chip, or using the top-bar `?` help search opens **R help** — `EditorViewModel.showHelp`
+  (generation-guarded so a dismissed lookup can't resurface) drives a `HelpState`
+  rendered by `HelpSheet` (a `ModalBottomSheet` showing `Rd2txt` help text).
 - `ui/settings/` — `SettingsScreen` + `SettingsViewModel` for editing the
   backend URL and API key at runtime, with a "Test connection" action backed by
   `NetworkModule.probeHealth` (pings `<url>/health` through a separate client
@@ -233,8 +244,15 @@ that session's library → `PackagesResponse(packages)`. `/import-legacy`
 (`ImportLegacyRequest`/`ImportLegacyResponse`, in `data/model/PackageModels.kt`):
 request `sessionId`, response `imported` (count) + `packages` (names copied
 in) — copies packages from the old shared/legacy library into a session's own
-library, skipping ones already present. `/execute`, `/reset`, `/install`,
-`/uninstall`, and `/import-legacy` are the auth/rate-limit-protected endpoints
+library, skipping ones already present. `/symbols` (a `GET` with a `?sessionId=`
+query param, default `"default"`) lists completion symbol names — base +
+default-attached packages' exports plus the session's `library()`-d packages'
+exports — → `SymbolsResponse(symbols)` (`data/model/AssistModels.kt`). `/help`
+(`HelpRequest`/`HelpResponse`, same file): request `topic` (validated
+`^[A-Za-z0-9._]+$`, else `400`) + nullable `sessionId`, response `topic` /
+`packageName` (nullable) / `text` (the `tools::Rd2txt`-rendered help) / `found`.
+`/execute`, `/reset`, `/install`, `/uninstall`, `/import-legacy`, `/symbols`,
+and `/help` are the auth/rate-limit-protected endpoints
 (`is_protected` in `plumber.R`). There's no shared schema file — if
 you add a field on one side, add it on the other by hand, and remember the
 backend must emit **unboxed** JSON (see `run.R`) or scalar fields won't
@@ -262,6 +280,12 @@ backend session (`ProjectSession.of(project)`), giving it an isolated workspace
 library for the whole app; packages from the old shared library can be pulled
 into a project's library on demand via "Import packages from legacy library"
 (`/import-legacy`).
+
+Also built: **code assist** — editor **autocomplete** (a suggestion strip driven
+by a hybrid symbol set: baked base-R names + workspace objects + installed-package
+names + a cached backend `/symbols` index, filtered off the main thread) and
+in-app **R help** (`/help` → `tools::Rd2txt` text in a bottom sheet, reached from
+completion chips and a `?` help search).
 
 Still **not** built — don't assume these exist: on-device execution, and
 network-egress restriction or per-request VM isolation on the backend.

@@ -58,6 +58,20 @@ class EditorViewModelTest {
         override suspend fun uninstall(request: UninstallRequest): UninstallResponse = UninstallResponse(removed = true)
         override suspend fun packages(sessionId: String): PackagesResponse = PackagesResponse()
         override suspend fun importLegacy(request: ImportLegacyRequest): ImportLegacyResponse = ImportLegacyResponse()
+
+        var symbolsResponse: com.rmobile.console.data.model.SymbolsResponse =
+            com.rmobile.console.data.model.SymbolsResponse(listOf("mean", "median"))
+        var helpResponse: com.rmobile.console.data.model.HelpResponse =
+            com.rmobile.console.data.model.HelpResponse(topic = "mean", packageName = "base", text = "Usage", found = true)
+        var helpError: Throwable? = null
+        var lastHelp: com.rmobile.console.data.model.HelpRequest? = null
+
+        override suspend fun symbols(sessionId: String) = symbolsResponse
+        override suspend fun help(request: com.rmobile.console.data.model.HelpRequest): com.rmobile.console.data.model.HelpResponse {
+            lastHelp = request
+            helpError?.let { throw it }
+            return helpResponse
+        }
     }
 
     private class InMemoryHistoryStore(initial: List<HistoryEntry> = emptyList()) : HistoryStore {
@@ -264,5 +278,99 @@ class EditorViewModelTest {
         val reset = api.lastReset!!
         assertEquals(victimSession, reset.sessionId)
         assertTrue(reset.purgePackages)
+    }
+
+    @Test
+    fun `symbol set includes base names and refreshed index`() = runTest {
+        val api = FakeApi()
+        api.symbolsResponse = com.rmobile.console.data.model.SymbolsResponse(listOf("dplyr_fn"))
+        val vm = viewModel(api = api)
+        advanceUntilIdle() // init calls refreshSymbols()
+        val syms = vm.uiState.value.completionSymbols
+        assertTrue(syms.contains("mean"))       // baked base
+        assertTrue(syms.contains("dplyr_fn"))   // refreshed index
+    }
+
+    @Test
+    fun `run adds workspace objects to the symbol set`() = runTest {
+        val api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("my_df")))
+        val vm = viewModel(api = api)
+        vm.onCodeChanged("my_df <- 1")
+        vm.runCode()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.completionSymbols.contains("my_df"))
+    }
+
+    @Test
+    fun `showHelp transitions Loading to Loaded`() = runTest {
+        val vm = viewModel(api = FakeApi())
+        vm.showHelp("mean")
+        advanceUntilIdle()
+        val help = vm.uiState.value.help
+        assertTrue(help is HelpState.Loaded)
+        assertEquals("mean", (help as HelpState.Loaded).response.topic)
+    }
+
+    @Test
+    fun `showHelp maps not-found result`() = runTest {
+        val api = FakeApi()
+        api.helpResponse = com.rmobile.console.data.model.HelpResponse(topic = "zzz", found = false)
+        val vm = viewModel(api = api)
+        vm.showHelp("zzz")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.help is HelpState.NotFound)
+    }
+
+    @Test
+    fun `dismissHelp clears the sheet`() = runTest {
+        val vm = viewModel(api = FakeApi())
+        vm.showHelp("mean")
+        advanceUntilIdle()
+        vm.dismissHelp()
+        assertEquals(null, vm.uiState.value.help)
+    }
+
+    @Test
+    fun `showHelp maps failure to Error`() = runTest {
+        val api = FakeApi()
+        api.helpError = RuntimeException("network down")
+        val vm = viewModel(api = api)
+        vm.showHelp("mean")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.help is HelpState.Error)
+    }
+
+    @Test
+    fun `showHelp with blank topic is a no-op`() = runTest {
+        val vm = viewModel(api = FakeApi())
+        vm.showHelp("   ")
+        advanceUntilIdle()
+        assertEquals(null, vm.uiState.value.help)
+    }
+
+    @Test
+    fun `dismiss during loading keeps the sheet closed when the response arrives`() = runTest {
+        val vm = viewModel(api = FakeApi())
+        vm.showHelp("mean")           // sets Loading, schedules the lookup
+        vm.dismissHelp()              // user closes the sheet before it resolves
+        advanceUntilIdle()            // the in-flight response now completes
+        assertEquals(null, vm.uiState.value.help) // must not resurface the sheet
+    }
+
+    @Test
+    fun `switching to a new project drops the old symbol set and refreshes`() = runTest {
+        val api = FakeApi(ExecuteResponse(stdout = "ok", workspaceObjects = listOf("old_var")))
+        api.symbolsResponse = com.rmobile.console.data.model.SymbolsResponse(listOf("fresh_sym"))
+        val vm = viewModel(api = api)
+        vm.runCode()                  // populate project A's workspace objects
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.completionSymbols.contains("old_var"))
+
+        vm.newProject("B")
+        // Old project's workspace-derived completions are dropped synchronously.
+        assertFalse(vm.uiState.value.completionSymbols.contains("old_var"))
+        advanceUntilIdle()
+        // The new project's session index is refetched.
+        assertTrue(vm.uiState.value.completionSymbols.contains("fresh_sym"))
     }
 }

@@ -22,3 +22,14 @@ fun insertAt(
     val newText = text.replaceRange(start, end, insert)
     return InsertResult(newText, start + caret.coerceIn(0, insert.length))
 }
+
+/**
+ * Replaces the half-open token [range] in [text] with [replacement], returning the
+ * new text and the caret position just after the inserted text. Pure.
+ */
+fun replaceRange(text: String, range: IntRange, replacement: String): InsertResult {
+    val start = range.first.coerceIn(0, text.length)
+    val end = (range.last + 1).coerceIn(start, text.length)
+    val newText = text.replaceRange(start, end, replacement)
+    return InsertResult(newText, start + replacement.length)
+}

@@ -17,6 +17,7 @@ import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptLibrary
 import com.rmobile.console.data.scripts.SavedScriptStore
+import com.rmobile.console.ui.editor.completion.BaseRSymbols
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +35,10 @@ class EditorViewModel(
     private val _uiState: MutableStateFlow<EditorUiState>
     val uiState: StateFlow<EditorUiState>
 
+    private var symbolIndex: List<String> = emptyList()
+    private var packageNames: List<String> = emptyList()
+    private var helpRequestId = 0
+
     init {
         val loaded = projectStore.loadProjects()
         val projects = loaded.ifEmpty { listOf(ProjectOps.newProject(now(), "Untitled", now())) }
@@ -50,6 +55,7 @@ class EditorViewModel(
             ),
         )
         uiState = _uiState.asStateFlow()
+        refreshSymbols()
     }
 
     // --- editing ---
@@ -103,7 +109,10 @@ class EditorViewModel(
     fun openProject(id: Long) {
         val target = _uiState.value.projects.firstOrNull { it.id == id } ?: return
         projectStore.persistLastOpenProjectId(target.id)
-        _uiState.update { it.copy(project = target, code = ProjectOps.activeContent(target)) }
+        _uiState.update {
+            it.copy(project = target, code = ProjectOps.activeContent(target), workspaceObjects = emptyList())
+        }
+        onActiveProjectChanged()
     }
 
     fun newProject(name: String) {
@@ -111,7 +120,10 @@ class EditorViewModel(
         val updated = ProjectOps.upsert(_uiState.value.projects, created)
         projectStore.persistProjects(updated)
         projectStore.persistLastOpenProjectId(created.id)
-        _uiState.update { it.copy(projects = updated, project = created, code = ProjectOps.activeContent(created)) }
+        _uiState.update {
+            it.copy(projects = updated, project = created, code = ProjectOps.activeContent(created), workspaceObjects = emptyList())
+        }
+        onActiveProjectChanged()
     }
 
     fun renameProject(id: Long, name: String) {
@@ -131,6 +143,7 @@ class EditorViewModel(
         _uiState.value.projects.firstOrNull { it.id == id }?.let { victim ->
             viewModelScope.launch { repository.reset(ProjectSession.of(victim), purgePackages = true) }
         }
+        val wasActive = _uiState.value.project.id == id
         var remaining = ProjectOps.delete(_uiState.value.projects, id)
         if (remaining.isEmpty()) remaining = listOf(ProjectOps.newProject(now(), "Untitled", now()))
         projectStore.persistProjects(remaining)
@@ -138,11 +151,12 @@ class EditorViewModel(
             if (state.project.id == id) {
                 val next = remaining.first()
                 projectStore.persistLastOpenProjectId(next.id)
-                state.copy(projects = remaining, project = next, code = ProjectOps.activeContent(next))
+                state.copy(projects = remaining, project = next, code = ProjectOps.activeContent(next), workspaceObjects = emptyList())
             } else {
                 state.copy(projects = remaining)
             }
         }
+        if (wasActive) onActiveProjectChanged()
     }
 
     /** Imports a project from a `.zip`'s bytes, adding it to the library and opening it. */
@@ -160,9 +174,11 @@ class EditorViewModel(
                 projects = updated,
                 project = imported,
                 code = ProjectOps.activeContent(imported),
+                workspaceObjects = emptyList(),
                 errorMessage = null,
             )
         }
+        onActiveProjectChanged()
     }
 
     private fun persistProject(project: Project) {
@@ -238,6 +254,8 @@ class EditorViewModel(
                             workspaceObjects = response.workspaceObjects ?: it.workspaceObjects,
                         )
                     }
+                    recomputeSymbols()
+                    refreshSymbols()
                 }
                 .onFailure { t ->
                     _uiState.update {
@@ -251,5 +269,69 @@ class EditorViewModel(
         val updated = RunHistory.add(_uiState.value.history, HistoryEntry(code, now()))
         historyStore.persist(updated)
         _uiState.update { it.copy(history = updated) }
+    }
+
+    // --- code assist ---
+
+    private fun recomputeSymbols() {
+        val assembled = (BaseRSymbols.NAMES + _uiState.value.workspaceObjects + packageNames + symbolIndex)
+            .distinct()
+        _uiState.update { it.copy(completionSymbols = assembled) }
+    }
+
+    /**
+     * The active project changed: drop the previous project's symbol/package caches
+     * immediately (so its completions can't bleed into the new project), recompute
+     * against the now-empty caches, then refetch this project's session.
+     */
+    private fun onActiveProjectChanged() {
+        symbolIndex = emptyList()
+        packageNames = emptyList()
+        recomputeSymbols()
+        refreshSymbols()
+    }
+
+    /** Refresh the cached symbol index + package names for the active project's session. */
+    fun refreshSymbols() {
+        val session = ProjectSession.of(_uiState.value.project)
+        viewModelScope.launch {
+            val syms = repository.listSymbols(session).getOrNull().orEmpty()
+            val pkgs = repository.listPackages(session).getOrNull()?.packages.orEmpty()
+            if (ProjectSession.of(_uiState.value.project) == session) {
+                symbolIndex = syms
+                packageNames = pkgs
+                recomputeSymbols()
+            }
+        }
+    }
+
+    fun showHelp(topic: String) {
+        val t = topic.trim()
+        if (t.isEmpty()) return
+        // Stamp each request so a stale response (e.g. after the user dismissed the
+        // sheet, or fired a newer lookup) can't overwrite current help state.
+        val requestId = ++helpRequestId
+        val session = ProjectSession.of(_uiState.value.project)
+        _uiState.update { it.copy(help = HelpState.Loading(t)) }
+        viewModelScope.launch {
+            repository.help(t, session)
+                .onSuccess { resp ->
+                    if (requestId == helpRequestId) {
+                        _uiState.update {
+                            it.copy(help = if (resp.found) HelpState.Loaded(resp) else HelpState.NotFound(t))
+                        }
+                    }
+                }
+                .onFailure { th ->
+                    if (requestId == helpRequestId) {
+                        _uiState.update { it.copy(help = HelpState.Error(t, th.message ?: "Failed to load help.")) }
+                    }
+                }
+        }
+    }
+
+    fun dismissHelp() {
+        helpRequestId++ // invalidate any in-flight request so it can't resurface the sheet
+        _uiState.update { it.copy(help = null) }
     }
 }

@@ -2,9 +2,11 @@ package com.rmobile.console.ui.editor
 
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,15 +25,19 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -43,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -57,6 +65,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -77,8 +86,15 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.scripts.SavedScript
+import com.rmobile.console.ui.editor.completion.CompletionContext
+import com.rmobile.console.ui.editor.completion.CompletionOps
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 
 /** A token the quick-insert bar can drop at the cursor. [caret] is where the
  *  caret lands within the inserted text (e.g. 1 to sit inside `()`). */
@@ -97,7 +113,7 @@ private val quickInsertTokens = listOf(
     InsertToken("<<-", "<<- "),
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
 fun EditorScreen(
     onOpenSettings: () -> Unit,
@@ -113,6 +129,7 @@ fun EditorScreen(
     var showResetConfirm by remember { mutableStateOf(false) }
     var showAddFile by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
+    var showHelpSearch by remember { mutableStateOf(false) }
 
     // Local, cursor-aware editor state. Synced from uiState.code so history /
     // saved-script loads (which change code in the ViewModel) update the field.
@@ -137,6 +154,36 @@ fun EditorScreen(
         viewModel.onCodeChanged(result.text)
     }
 
+    // Autocomplete suggestions, computed off the UI thread and debounced, from the
+    // token under the cursor against the current symbol set. Re-derives when the
+    // symbol set changes.
+    var strip by remember { mutableStateOf(StripState(emptyList(), "")) }
+    val symbols = uiState.completionSymbols
+    LaunchedEffect(symbols) {
+        snapshotFlow { field }
+            .debounce(120)
+            .map { f ->
+                if (!f.selection.collapsed) {
+                    StripState(emptyList(), "")
+                } else {
+                    val ctx = CompletionContext(f.text, f.selection.end)
+                    val prefix = CompletionOps.currentPrefix(ctx)
+                    StripState(CompletionOps.suggest(prefix, symbols, limit = 30), prefix)
+                }
+            }
+            .flowOn(Dispatchers.Default)
+            .collect { strip = it }
+    }
+
+    val applyCompletion: (String) -> Unit = { symbol ->
+        val ctx = CompletionContext(field.text, field.selection.end)
+        CompletionOps.tokenRange(ctx)?.let { range ->
+            val result = replaceRange(field.text, range, symbol)
+            field = TextFieldValue(result.text, TextRange(result.cursor))
+            viewModel.onCodeChanged(result.text)
+        }
+    }
+
     val syntaxColors = RSyntaxColors(
         comment = MaterialTheme.colorScheme.onSurfaceVariant,
         string = Color(0xFF2E7D32),
@@ -155,6 +202,9 @@ fun EditorScreen(
                     }
                     IconButton(onClick = { showHistory = true }) {
                         Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Run history")
+                    }
+                    IconButton(onClick = { showHelpSearch = true }) {
+                        Icon(Icons.Default.Info, contentDescription = "R help")
                     }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -220,6 +270,12 @@ fun EditorScreen(
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                 visualTransformation = transformation,
+            )
+
+            SuggestionStrip(
+                strip = strip,
+                onPick = applyCompletion,
+                onHelp = viewModel::showHelp,
             )
 
             QuickInsertBar(onInsert = insert)
@@ -333,6 +389,38 @@ fun EditorScreen(
             onDismiss = { renameTarget = null },
         )
     }
+
+    if (showHelpSearch) {
+        var query by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showHelpSearch = false },
+            title = { Text("R help") },
+            text = {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text("Function or topic") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showHelpSearch = false
+                        viewModel.showHelp(query)
+                    },
+                    enabled = query.isNotBlank(),
+                ) { Text("Open") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHelpSearch = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    uiState.help?.let { help ->
+        HelpSheet(help = help, onDismiss = viewModel::dismissHelp)
+    }
 }
 
 @Composable
@@ -349,6 +437,92 @@ private fun QuickInsertBar(onInsert: (InsertToken) -> Unit) {
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
                 Text(token.label, fontFamily = FontFamily.Monospace)
+            }
+        }
+    }
+}
+
+/** Suggestions + the identifier under the cursor, for the autocomplete strip. */
+private data class StripState(val suggestions: List<String>, val token: String)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SuggestionStrip(
+    strip: StripState,
+    onPick: (String) -> Unit,
+    onHelp: (String) -> Unit,
+) {
+    if (strip.suggestions.isEmpty() && strip.token.isEmpty()) return
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (strip.token.isNotEmpty()) {
+            item {
+                AssistChip(
+                    onClick = { onHelp(strip.token) },
+                    label = { Text("? ${strip.token}") },
+                )
+            }
+        }
+        items(strip.suggestions, key = { it }) { symbol ->
+            // combinedClickable is the sole tap/long-press source; AssistChip's own
+            // onClick is a no-op so a single tap can't fire onPick twice.
+            AssistChip(
+                onClick = {},
+                modifier = Modifier.combinedClickable(
+                    onClick = { onPick(symbol) },
+                    onLongClick = { onHelp(symbol) },
+                ),
+                label = { Text(symbol, fontFamily = FontFamily.Monospace) },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HelpSheet(help: HelpState, onDismiss: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when (help) {
+                is HelpState.Loading -> {
+                    Text(
+                        "Loading help for ${help.topic}…",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    CircularProgressIndicator()
+                }
+                is HelpState.NotFound -> Text(
+                    "No help found for '${help.topic}'.",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                is HelpState.Error -> Text(
+                    help.message,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                is HelpState.Loaded -> {
+                    val pkg = help.response.packageName
+                    val title = if (pkg != null) "${help.response.topic} {$pkg}" else help.response.topic
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    SelectionContainer {
+                        Text(
+                            text = help.response.text,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 480.dp)
+                                .verticalScroll(rememberScrollState()),
+                        )
+                    }
+                }
             }
         }
     }
