@@ -38,7 +38,8 @@ session_paths <- function(session_id) {
     dir = dir,
     workspace = file.path(dir, "workspace.RData"),
     attached = file.path(dir, "attached.txt"),
-    rlib = file.path(dir, "rlib")
+    rlib = file.path(dir, "rlib"),
+    data = file.path(dir, "data")
   )
 }
 
@@ -48,8 +49,30 @@ LEGACY_PKG_LIB <- Sys.getenv("R_PKG_LIB", "/data/rlib")
 INSTALL_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_INSTALL_TIMEOUT_SECONDS", "300"))
 CRAN_REPO <- Sys.getenv("R_CRAN_REPO", "https://packagemanager.posit.co/cran/__linux__/jammy/latest")
 
+# Max bytes accepted by POST /upload. Default 1 GiB. NOTE: plumber buffers the
+# whole multipart body in memory to parse it, so the container's mem_limit must
+# exceed this (see docker-compose.yml). Operators lowering this can lower mem_limit.
+UPLOAD_MAX_BYTES <- as.numeric(Sys.getenv("R_UPLOAD_MAX_BYTES", "1073741824"))
+
+# File names the run harness writes itself; a data file may not claim them.
+DATA_RESERVED <- c("script.R", "objects.txt", "main.R")
+
+# Reduce an uploaded filename to a safe basename: strip path, replace disallowed
+# characters with "_", drop leading dots, and reject reserved/empty names.
+sanitize_data_name <- function(fname) {
+  if (is.null(fname) || !is.character(fname) || length(fname) != 1 || !nzchar(fname)) return(NULL)
+  base <- basename(fname)
+  base <- gsub("[^A-Za-z0-9._-]", "_", base)
+  base <- sub("^\\.+", "", base)
+  if (!nzchar(base)) return(NULL)
+  if (base %in% DATA_RESERVED) return(NULL)
+  if (grepl("^plot[0-9]+\\.png$", base)) return(NULL)
+  if (grepl("^table[0-9]+\\.json$", base)) return(NULL)
+  base
+}
+
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy", "/symbols", "/help")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy", "/symbols", "/help", "/upload", "/data", "/delete-data")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -479,4 +502,37 @@ function(req, res) {
   pkg <- if (file.exists(out_pkg)) readLines(out_pkg, warn = FALSE)[1] else NULL
 
   list(topic = topic, packageName = pkg, text = text, found = nzchar(text))
+}
+
+#* Upload a data file into a session's data dir (multipart/form-data, part "file").
+#* @post /upload
+function(req, res, sessionId = "default") {
+  session_id <- sanitize_session_id(sessionId)
+  ct <- req$HTTP_CONTENT_TYPE
+  if (is.null(ct) || !grepl("multipart/form-data", ct, ignore.case = TRUE)) {
+    res$status <- 400
+    return(list(name = "", size = 0, error = "Expected multipart/form-data."))
+  }
+  boundary <- sub('^.*boundary=', '', ct)
+  parts <- tryCatch(webutils::parse_multipart(req$bodyRaw, boundary), error = function(e) NULL)
+  part <- if (!is.null(parts)) parts[["file"]] else NULL
+  if (is.null(part) || is.null(part$value)) {
+    res$status <- 400
+    return(list(name = "", size = 0, error = "Missing 'file' part."))
+  }
+  raw <- part$value
+  size <- length(raw)
+  if (size > UPLOAD_MAX_BYTES) {
+    res$status <- 413
+    return(list(name = "", size = 0, error = sprintf("File exceeds the %.0f-byte limit.", UPLOAD_MAX_BYTES)))
+  }
+  name <- sanitize_data_name(part$filename)
+  if (is.null(name)) {
+    res$status <- 400
+    return(list(name = "", size = 0, error = "Invalid or reserved file name."))
+  }
+  paths <- session_paths(session_id)
+  dir.create(paths$data, recursive = TRUE, showWarnings = FALSE)
+  writeBin(raw, file.path(paths$data, name))
+  list(name = name, size = size)
 }
