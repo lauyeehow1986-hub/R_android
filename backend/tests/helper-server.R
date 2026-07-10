@@ -80,4 +80,9 @@ get_packages <- function(server, session_id = NULL, key = NULL) {
   api_request(server, "/packages", query = query, key = key)
 }
 
+get_symbols <- function(server, session_id = NULL, key = NULL) {
+  query <- if (!is.null(session_id)) list(sessionId = session_id) else NULL
+  api_request(server, "/symbols", query = query, key = key)
+}
+
 get_health <- function(server) api_request(server, "/health")

@@ -8,6 +8,8 @@ EXECUTION_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_EXECUTION_TIMEOUT_SECONDS"
 MAX_CODE_LENGTH <- as.numeric(Sys.getenv("R_MAX_CODE_LENGTH", "20000"))
 # Max rows delivered per captured table (the true count is still reported).
 TABLE_MAX_ROWS <- as.integer(Sys.getenv("R_TABLE_MAX_ROWS", "200"))
+# Max completion symbols returned by GET /symbols.
+SYMBOLS_MAX <- as.integer(Sys.getenv("R_SYMBOLS_MAX", "5000"))
 
 # Optional shared-secret auth. When R_API_KEY is set, /execute requires a
 # matching X-API-Key header; when unset, auth is disabled (local-dev default).
@@ -47,7 +49,7 @@ INSTALL_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_INSTALL_TIMEOUT_SECONDS", "3
 CRAN_REPO <- Sys.getenv("R_CRAN_REPO", "https://packagemanager.posit.co/cran/__linux__/jammy/latest")
 
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy", "/symbols")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -383,4 +385,40 @@ function(sessionId = "default") {
   pkgs <- tryCatch(rownames(installed.packages(lib.loc = lib)), error = function(e) NULL)
   if (is.null(pkgs)) pkgs <- character(0)
   list(packages = as.list(pkgs))
+}
+
+#* Completion symbols for a session: base + recommended + attached-package exports
+#* @get /symbols
+function(sessionId = "default") {
+  session_id <- sanitize_session_id(sessionId)
+  paths <- session_paths(session_id)
+  dir.create(paths$rlib, recursive = TRUE, showWarnings = FALSE)
+
+  run_dir <- file.path(tempdir(), paste0("symbols-", format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", sample.int(1e6, 1)))
+  dir.create(run_dir, recursive = TRUE)
+  on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  script_path <- file.path(run_dir, "symbols.R")
+  out_path <- file.path(run_dir, "symbols.txt")
+
+  attached_literal <- paste(deparse(DEFAULT_ATTACHED), collapse = "")
+  writeLines(c(
+    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(paths$rlib)),
+    sprintf('base_pkgs <- %s', attached_literal),
+    sprintf('extra <- if (file.exists(%s)) readLines(%s) else character(0)',
+            shQuote(paths$attached), shQuote(paths$attached)),
+    'pkgs <- unique(c(base_pkgs, extra[nzchar(extra)]))',
+    'syms <- unlist(lapply(pkgs, function(p) tryCatch(getNamespaceExports(p), error = function(e) character(0))))',
+    'syms <- unique(syms[grepl("^[A-Za-z.][A-Za-z0-9._]*$", syms)])',
+    'syms <- sort(syms)',
+    sprintf('if (length(syms) > %d) syms <- syms[seq_len(%d)]', SYMBOLS_MAX, SYMBOLS_MAX),
+    sprintf('writeLines(syms, %s)', shQuote(out_path))
+  ), script_path)
+
+  result <- tryCatch(
+    processx::run("Rscript", c("--vanilla", script_path), wd = run_dir,
+                  timeout = EXECUTION_TIMEOUT_SECONDS, error_on_status = FALSE),
+    error = function(e) e
+  )
+  syms <- if (!inherits(result, "error") && file.exists(out_path)) readLines(out_path) else character(0)
+  list(symbols = as.list(syms))
 }
