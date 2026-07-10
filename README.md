@@ -31,6 +31,9 @@ together. See `backend/README.md` for backend-specific setup and — important
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
 - **R syntax highlighting** and a **quick-insert bar** for common operators
   (`<-`, `|>`, `%>%`, `()`, …).
+- **Code assist** — an autocomplete **suggestion strip** (base R + your workspace
+  objects + installed-package symbols) and in-app **R help** (`?fn`), reached from
+  a completion chip or a `?` help search, rendered as text in a sheet.
 - **Named saved scripts** and **run history**, both persisted — reopen, restore,
   and delete.
 - **In-app Settings** — change the backend URL and API key at runtime, with a
