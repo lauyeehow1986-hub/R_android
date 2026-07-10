@@ -33,6 +33,19 @@ class CompletionOpsTest {
     }
 
     @Test
+    fun `tokenRange rejects tokens starting with digit or underscore`() {
+        assertNull(CompletionOps.tokenRange(CompletionContext("_foo", 4)))
+        assertNull(CompletionOps.tokenRange(CompletionContext("123abc", 6)))
+        assertEquals("", CompletionOps.currentPrefix(CompletionContext("_foo", 4)))
+    }
+
+    @Test
+    fun `tokenRange is null at cursor zero and handles out-of-range cursor`() {
+        assertNull(CompletionOps.tokenRange(CompletionContext("mean", 0)))
+        assertEquals("mean", CompletionOps.currentPrefix(CompletionContext("mean", 99)))
+    }
+
+    @Test
     fun `suggest ranks exact-prefix before alphabetical and is case-insensitive`() {
         val symbols = listOf("median", "Mean", "mean", "meanX", "sum")
         val out = CompletionOps.suggest("mea", symbols, limit = 10)
