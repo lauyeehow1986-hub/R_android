@@ -6,6 +6,8 @@ library(jsonlite)
 # See README.md for the security assumptions this service makes (and does not make).
 EXECUTION_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_EXECUTION_TIMEOUT_SECONDS", "20"))
 MAX_CODE_LENGTH <- as.numeric(Sys.getenv("R_MAX_CODE_LENGTH", "20000"))
+# Max rows delivered per captured table (the true count is still reported).
+TABLE_MAX_ROWS <- as.integer(Sys.getenv("R_TABLE_MAX_ROWS", "200"))
 
 # Optional shared-secret auth. When R_API_KEY is set, /execute requires a
 # matching X-API-Key header; when unset, auth is disabled (local-dev default).
@@ -123,7 +125,6 @@ function(req, res) {
       res$status <- 413
       return(list(stdout = "", stderr = "", plots = list(), error = "Project exceeds the maximum allowed size.", timedOut = FALSE))
     }
-    body_line <- sprintf('source(%s, echo = FALSE, print.eval = TRUE)', shQuote(entry))
   } else {
     code <- body$code
     if (is.null(code) || !is.character(code) || !nzchar(trimws(code))) {
@@ -134,7 +135,6 @@ function(req, res) {
       res$status <- 413
       return(list(stdout = "", stderr = "", plots = list(), error = "Code exceeds the maximum allowed length.", timedOut = FALSE))
     }
-    body_line <- code
   }
 
   run_dir <- file.path(tempdir(), paste0("run-", format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", sample.int(1e6, 1)))
@@ -145,6 +145,10 @@ function(req, res) {
     for (i in seq_along(file_names)) {
       writeLines(file_contents[i], file.path(run_dir, file_names[i]))
     }
+    entry_rel <- entry
+  } else {
+    entry_rel <- "main.R"
+    writeLines(code, file.path(run_dir, entry_rel))
   }
 
   script_path <- file.path(run_dir, "script.R")
@@ -173,7 +177,30 @@ function(req, res) {
       shQuote(paths$attached), shQuote(paths$attached)
     ),
     sprintf('grDevices::png(filename = %s, width = 800, height = 600)', shQuote(plot_pattern)),
-    body_line,
+    # Run the entry's top-level expressions ourselves (instead of source()) so any
+    # visible data-frame-like value is captured as a table<NN>.json side-channel
+    # file. Helpers live inside local({}) so nothing leaks into globalenv (keeping
+    # save.image()/workspaceObjects clean); user assignments still target globalenv.
+    'local({',
+    sprintf('  .maxrows <- %d', TABLE_MAX_ROWS),
+    '  .emit <- function(x) {',
+    '    df <- if (is.data.frame(x)) x else as.data.frame.matrix(x, stringsAsFactors = FALSE)',
+    '    n <- nrow(df); sub <- utils::head(df, .maxrows)',
+    '    types <- vapply(df, function(cc) class(cc)[1], character(1))',
+    '    cells <- lapply(sub, function(col) if (is.list(col)) vapply(col, function(v) paste(format(v), collapse = ", "), character(1)) else format(col, trim = TRUE))',
+    '    cols <- names(df)',
+    '    rn <- rownames(sub)',
+    '    if (!identical(rn, as.character(seq_len(nrow(sub))))) { cells <- c(list(rn), cells); cols <- c("", cols); types <- c("", types) }',
+    '    rowsOut <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(cc) as.character(cc[i]), character(1))))',
+    '    obj <- list(columns = as.character(cols), columnTypes = as.character(types), rows = rowsOut, totalRows = jsonlite::unbox(as.integer(n)))',
+    '    idx <- length(list.files(".", pattern = "^table[0-9]+\\\\.json$")) + 1L',
+    '    writeLines(jsonlite::toJSON(obj, auto_unbox = FALSE), sprintf("table%03d.json", idx))',
+    '  }',
+    '  .tabular <- function(v) is.data.frame(v) || ((is.matrix(v) || inherits(v, "table")) && length(dim(v)) == 2)',
+    '  .is_print <- function(e) is.call(e) && is.symbol(e[[1]]) && identical(as.character(e[[1]]), "print")',
+    '  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if ((r$visible || pr) && .tabular(r$value)) try(.emit(r$value), silent = TRUE); if (r$visible) print(r$value) }',
+    sprintf('  .exec(parse(file = %s))', shQuote(entry_rel)),
+    '})',
     'invisible(grDevices::dev.off())',
     sprintf('.saved <- try(save.image(%s), silent = TRUE)', shQuote(paths$workspace)),
     'if (inherits(.saved, "try-error")) message("Note: some objects could not be saved; workspace state was not updated.")',
@@ -211,12 +238,18 @@ function(req, res) {
   plot_files <- sort(list.files(run_dir, pattern = "^plot[0-9]+\\.png$", full.names = TRUE))
   plots <- lapply(plot_files, base64enc::base64encode)
 
+  # simplifyVector = FALSE keeps columns/rows as lists so plumber's global unboxed
+  # serializer can't collapse a 1-row/1-column table into scalars.
+  table_files <- sort(list.files(run_dir, pattern = "^table[0-9]+\\.json$", full.names = TRUE))
+  tables <- lapply(table_files, function(p) jsonlite::fromJSON(p, simplifyVector = FALSE))
+
   workspace_objects <- if (file.exists(objects_path)) as.list(readLines(objects_path)) else NULL
 
   list(
     stdout = result$stdout,
     stderr = result$stderr,
     plots = plots,
+    tables = tables,
     error = if (result$status != 0) sprintf("R exited with status %d.", result$status) else NULL,
     timedOut = FALSE,
     workspaceObjects = workspace_objects

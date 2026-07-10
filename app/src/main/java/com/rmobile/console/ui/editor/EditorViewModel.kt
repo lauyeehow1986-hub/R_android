@@ -226,6 +226,7 @@ class EditorViewModel(
                             stdout = response.stdout,
                             stderr = response.stderr,
                             plotsBase64 = response.plots,
+                            tables = response.tables,
                             errorMessage = response.error,
                             timedOut = response.timedOut,
                             workspaceObjects = response.workspaceObjects ?: it.workspaceObjects,
@@ -234,7 +235,7 @@ class EditorViewModel(
                 }
                 .onFailure { t ->
                     _uiState.update {
-                        it.copy(isRunning = false, errorMessage = t.message ?: "Failed to reach the R execution backend.", timedOut = false)
+                        it.copy(isRunning = false, errorMessage = t.message ?: "Failed to reach the R execution backend.", timedOut = false, tables = emptyList())
                     }
                 }
         }

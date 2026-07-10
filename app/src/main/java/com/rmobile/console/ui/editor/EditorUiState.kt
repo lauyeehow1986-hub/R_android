@@ -16,6 +16,7 @@ data class EditorUiState(
     val stdout: String = "",
     val stderr: String = "",
     val plotsBase64: List<String> = emptyList(),
+    val tables: List<com.rmobile.console.data.model.RTable> = emptyList(),
     val errorMessage: String? = null,
     val timedOut: Boolean = false,
     val history: List<HistoryEntry> = emptyList(),

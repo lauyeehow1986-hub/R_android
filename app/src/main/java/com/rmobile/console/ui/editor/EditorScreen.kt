@@ -3,9 +3,13 @@ package com.rmobile.console.ui.editor
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -55,8 +59,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -65,6 +72,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.scripts.SavedScript
@@ -535,6 +544,7 @@ private fun SaveScriptDialog(
 private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    var zoomedPlot by remember { mutableStateOf<ImageBitmap?>(null) }
     val consoleText = buildString {
         if (uiState.stdout.isNotBlank()) append(uiState.stdout)
         if (uiState.stderr.isNotBlank()) {
@@ -585,11 +595,18 @@ private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
                 )
             }
         }
+        items(uiState.tables) { table ->
+            RTableView(table)
+        }
         items(uiState.plotsBase64) { base64Png ->
             val bitmap = remember(base64Png) { decodeBase64Png(base64Png) }
             bitmap?.let {
                 Column {
-                    Image(bitmap = it.asImageBitmap(), contentDescription = "R plot output")
+                    Image(
+                        bitmap = it.asImageBitmap(),
+                        contentDescription = "R plot output",
+                        modifier = Modifier.clickable { zoomedPlot = it.asImageBitmap() },
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
@@ -600,6 +617,36 @@ private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
                     }
                 }
             }
+        }
+    }
+
+    zoomedPlot?.let { bmp -> ZoomablePlotDialog(bmp) { zoomedPlot = null } }
+}
+
+@Composable
+private fun ZoomablePlotDialog(bitmap: ImageBitmap, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        var scale by remember { mutableStateOf(1f) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
+        val state = rememberTransformableState { zoomChange, panChange, _ ->
+            scale = (scale * zoomChange).coerceIn(1f, 5f)
+            offset += panChange
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.9f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Zoomed plot",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)
+                    .transformable(state),
+            )
         }
     }
 }
