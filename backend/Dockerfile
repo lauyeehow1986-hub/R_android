@@ -11,7 +11,8 @@ RUN install2.r --error --skipmissing \
     processx \
     base64enc \
     jsonlite \
-    remotes
+    remotes \
+    webutils
 
 # Bake any packages declared in packages.txt at build time (the build has
 # network; the hardened runtime has none). Empty manifest => no-op.

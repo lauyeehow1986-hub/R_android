@@ -513,7 +513,8 @@ function(req, res, sessionId = "default") {
     res$status <- 400
     return(list(name = "", size = 0, error = "Expected multipart/form-data."))
   }
-  boundary <- sub('^.*boundary=', '', ct)
+  boundary <- sub(';.*$', '', sub('^.*boundary=', '', ct))
+  boundary <- gsub('^"|"$', '', trimws(boundary))
   parts <- tryCatch(webutils::parse_multipart(req$bodyRaw, boundary), error = function(e) NULL)
   part <- if (!is.null(parts)) parts[["file"]] else NULL
   if (is.null(part) || is.null(part$value)) {
