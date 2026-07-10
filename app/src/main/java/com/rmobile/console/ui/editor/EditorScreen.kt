@@ -2,9 +2,11 @@ package com.rmobile.console.ui.editor
 
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -57,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -77,8 +81,15 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.scripts.SavedScript
+import com.rmobile.console.ui.editor.completion.CompletionContext
+import com.rmobile.console.ui.editor.completion.CompletionOps
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 
 /** A token the quick-insert bar can drop at the cursor. [caret] is where the
  *  caret lands within the inserted text (e.g. 1 to sit inside `()`). */
@@ -97,7 +108,7 @@ private val quickInsertTokens = listOf(
     InsertToken("<<-", "<<- "),
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
 fun EditorScreen(
     onOpenSettings: () -> Unit,
@@ -135,6 +146,36 @@ fun EditorScreen(
         )
         field = TextFieldValue(result.text, TextRange(result.cursor))
         viewModel.onCodeChanged(result.text)
+    }
+
+    // Autocomplete suggestions, computed off the UI thread and debounced, from the
+    // token under the cursor against the current symbol set. Re-derives when the
+    // symbol set changes.
+    var strip by remember { mutableStateOf(StripState(emptyList(), "")) }
+    val symbols = uiState.completionSymbols
+    LaunchedEffect(symbols) {
+        snapshotFlow { field }
+            .debounce(120)
+            .map { f ->
+                if (!f.selection.collapsed) {
+                    StripState(emptyList(), "")
+                } else {
+                    val ctx = CompletionContext(f.text, f.selection.end)
+                    val prefix = CompletionOps.currentPrefix(ctx)
+                    StripState(CompletionOps.suggest(prefix, symbols, limit = 30), prefix)
+                }
+            }
+            .flowOn(Dispatchers.Default)
+            .collect { strip = it }
+    }
+
+    val applyCompletion: (String) -> Unit = { symbol ->
+        val ctx = CompletionContext(field.text, field.selection.end)
+        CompletionOps.tokenRange(ctx)?.let { range ->
+            val result = replaceRange(field.text, range, symbol)
+            field = TextFieldValue(result.text, TextRange(result.cursor))
+            viewModel.onCodeChanged(result.text)
+        }
     }
 
     val syntaxColors = RSyntaxColors(
@@ -220,6 +261,12 @@ fun EditorScreen(
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                 visualTransformation = transformation,
+            )
+
+            SuggestionStrip(
+                strip = strip,
+                onPick = applyCompletion,
+                onHelp = viewModel::showHelp,
             )
 
             QuickInsertBar(onInsert = insert)
@@ -350,6 +397,42 @@ private fun QuickInsertBar(onInsert: (InsertToken) -> Unit) {
             ) {
                 Text(token.label, fontFamily = FontFamily.Monospace)
             }
+        }
+    }
+}
+
+/** Suggestions + the identifier under the cursor, for the autocomplete strip. */
+private data class StripState(val suggestions: List<String>, val token: String)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SuggestionStrip(
+    strip: StripState,
+    onPick: (String) -> Unit,
+    onHelp: (String) -> Unit,
+) {
+    if (strip.suggestions.isEmpty() && strip.token.isEmpty()) return
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (strip.token.isNotEmpty()) {
+            item {
+                AssistChip(
+                    onClick = { onHelp(strip.token) },
+                    label = { Text("? ${strip.token}") },
+                )
+            }
+        }
+        items(strip.suggestions) { symbol ->
+            AssistChip(
+                onClick = { onPick(symbol) },
+                modifier = Modifier.combinedClickable(
+                    onClick = { onPick(symbol) },
+                    onLongClick = { onHelp(symbol) },
+                ),
+                label = { Text(symbol, fontFamily = FontFamily.Monospace) },
+            )
         }
     }
 }
