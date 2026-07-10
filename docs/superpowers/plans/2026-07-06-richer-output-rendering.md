@@ -127,7 +127,8 @@ In the `wrapped <- c(...)` vector, replace the single `body_line,` element with 
     '    writeLines(jsonlite::toJSON(obj, auto_unbox = FALSE), sprintf("table%03d.json", idx))',
     '  }',
     '  .tabular <- function(v) is.data.frame(v) || ((is.matrix(v) || inherits(v, "table")) && length(dim(v)) == 2)',
-    '  .exec <- function(exprs) for (e in exprs) { r <- withVisible(eval(e, globalenv())); if (r$visible) { if (.tabular(r$value)) try(.emit(r$value), silent = TRUE); print(r$value) } }',
+    '  .is_print <- function(e) is.call(e) && is.symbol(e[[1]]) && identical(as.character(e[[1]]), "print")',
+    '  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if ((r$visible || pr) && .tabular(r$value)) try(.emit(r$value), silent = TRUE); if (r$visible) print(r$value) }',
     sprintf('  .exec(parse(file = %s))', shQuote(entry_rel)),
     '})',
 ```
