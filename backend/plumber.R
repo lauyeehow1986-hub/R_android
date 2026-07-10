@@ -363,7 +363,7 @@ function(req, res) {
 
   copied <- character(0)
   for (p in setdiff(legacy, present)) {
-    ok <- tryCatch({ file.copy(file.path(LEGACY_PKG_LIB, p), lib, recursive = TRUE); TRUE },
+    ok <- tryCatch(isTRUE(file.copy(file.path(LEGACY_PKG_LIB, p), lib, recursive = TRUE)),
                    error = function(e) FALSE)
     if (isTRUE(ok)) copied <- c(copied, p)
   }

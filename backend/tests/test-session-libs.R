@@ -46,3 +46,20 @@ test_that("import-legacy is idempotent and no-ops on an empty legacy lib", {
   expect_equal(res$body$imported, 0)
   expect_equal(length(res$body$packages), 0)
 })
+
+test_that("import-legacy copies packages and is idempotent", {
+  legacy <- tempfile("legacy-"); dir.create(legacy)
+  # Seed the legacy lib with a real installed package so installed.packages() sees it.
+  file.copy(find.package("jsonlite"), legacy, recursive = TRUE)
+
+  srv <- local_server(env = list(R_PKG_LIB = legacy))
+  first <- api_request(srv, "/import-legacy", body = list(sessionId = "imp"))
+  expect_true(first$body$imported >= 1)
+
+  pkgs <- get_packages(srv, session_id = "imp")
+  expect_true("jsonlite" %in% unlist(pkgs$body$packages))
+
+  # Second import is a no-op (jsonlite already present in the session lib).
+  second <- api_request(srv, "/import-legacy", body = list(sessionId = "imp"))
+  expect_equal(second$body$imported, 0)
+})
