@@ -55,6 +55,12 @@ class WebRController(context: Context) {
                     val headers = HashMap(res.responseHeaders ?: emptyMap())
                     headers.putAll(coiHeaders)
                     res.responseHeaders = headers
+                    // WebViewAssetLoader leaves the status line empty, which a
+                    // synchronous XHR reports as status 0. WebR fetches its filesystem
+                    // image via a sync XHR and requires a 2xx status, so it aborts with
+                    // "Can't download filesystem image data" without this. Stamp 200 OK
+                    // on found assets (data present) so those XHRs succeed.
+                    if (res.data != null) res.setStatusCodeAndReasonPhrase(200, "OK")
                     return res
                 }
             }
