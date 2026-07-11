@@ -8,6 +8,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -16,6 +17,7 @@ import com.rmobile.console.ui.data.DataScreen
 import com.rmobile.console.ui.editor.EditorScreen
 import com.rmobile.console.ui.editor.EditorViewModel
 import com.rmobile.console.ui.packages.PackagesScreen
+import com.rmobile.console.ui.preview.PreviewScreen
 import com.rmobile.console.ui.projects.ProjectsScreen
 import com.rmobile.console.ui.settings.SettingsScreen
 import com.rmobile.console.ui.theme.RConsoleTheme
@@ -33,7 +35,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { EDITOR, SETTINGS, PACKAGES, PROJECTS, DATA }
+private enum class Screen { EDITOR, SETTINGS, PACKAGES, PROJECTS, DATA, PREVIEW }
 
 @Composable
 private fun AppRoot() {
@@ -41,6 +43,8 @@ private fun AppRoot() {
     // justify a navigation library. One EditorViewModel is hoisted here so the
     // editor and the project-library screen share the same project state.
     var screen by rememberSaveable { mutableStateOf(Screen.EDITOR) }
+    var previewSource by rememberSaveable { mutableStateOf("file") }
+    var previewName by rememberSaveable { mutableStateOf("") }
     val editorViewModel: EditorViewModel = viewModel()
 
     when (screen) {
@@ -49,6 +53,9 @@ private fun AppRoot() {
             onOpenPackages = { screen = Screen.PACKAGES },
             onOpenProjects = { screen = Screen.PROJECTS },
             onOpenData = { screen = Screen.DATA },
+            onPreviewObject = { name ->
+                previewSource = "object"; previewName = name; screen = Screen.PREVIEW
+            },
             viewModel = editorViewModel,
         )
         Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.EDITOR })
@@ -67,6 +74,14 @@ private fun AppRoot() {
                 editorViewModel.insertText(name)
                 screen = Screen.EDITOR
             },
+            onPreviewFile = { name ->
+                previewSource = "file"; previewName = name; screen = Screen.PREVIEW
+            },
+        )
+        Screen.PREVIEW -> PreviewScreen(
+            source = previewSource,
+            name = previewName,
+            onBack = { screen = if (previewSource == "file") Screen.DATA else Screen.EDITOR },
         )
     }
 }

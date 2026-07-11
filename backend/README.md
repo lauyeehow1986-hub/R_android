@@ -92,6 +92,27 @@ Tests live in `backend/tests/` (`helper-server.R` starts/stops the server;
   `{"topic":"mean","packageName":"base","text":"mean {base}\n...","found":true}`;
   `found` is `false` with an empty `text` when no topic matches. Read-only.
   Same auth / rate-limit rules as `/execute`.
+- `POST /preview` — body `{"sessionId":"proj-123","source":"file"|"object","name":"sales.csv"}`,
+  returns `{"table","error","truncated"}` (`table` is a single `RTable`-shaped
+  object, or `null` on error; `truncated` is `true` when the source has more
+  rows than `R_TABLE_MAX_ROWS`). Strictly **read-only** — it never calls
+  `save.image()` and never touches a session's workspace or history, so it's
+  safe to call freely. For `source: "file"` it reads a session data file by
+  extension: `.csv`/`.tsv`/`.tab` and `.rds` with base R (`read.csv`,
+  `read.delim`, `readRDS`); `.xlsx`/`.xls` via `readxl` and `.parquet` via
+  `arrow` **if installed in that session's library**, else a friendly
+  "Install 'readxl'/'arrow' in this project to preview .xlsx/.parquet files."
+  error; any other extension errors with "Can't preview this file type." For
+  `source: "object"` it `load()`s a *fresh copy* of the session's
+  `workspace.RData` into a throwaway environment and `get()`s the named object
+  — the live session workspace is never mutated. The value must coerce to a
+  data frame or a 2-D matrix/table (else "Not a table."). Emits the same
+  `table*.json` format as `/execute`'s captured tables (rows capped at
+  `R_TABLE_MAX_ROWS`, default 200) via the shared `TABLE_EMIT_HELPERS` used by
+  both endpoints. Runs in its own isolated `Rscript --vanilla` subprocess with
+  the usual execution timeout; a timeout or launch failure returns a distinct
+  error message rather than crashing. Same auth / rate-limit rules as
+  `/execute`.
 - `GET /health` — liveness check (never requires auth).
 
 ### Data files (`/upload`, `/data`, `/delete-data`)

@@ -114,6 +114,17 @@ Retrofit client, not worth a framework yet):
   files" item in the editor's overflow menu; like the Packages screen it owns its own
   `DataViewModel` for list/upload state, and only the tap-to-insert action reaches the
   hoisted `EditorViewModel` (via the `onInsertFileName` callback wired in `MainActivity`).
+- `ui/preview/` — **data viewer**: `PreviewScreen` (full-screen, reuses
+  `RTableView` — the same table renderer `/execute`'s `tables` use, so it
+  already shows a "Showing X of N rows" footer) driven by `PreviewViewModel`
+  (`StateFlow<PreviewUiState>`), session-scoped exactly like `DataViewModel` —
+  it resolves the active project's session via `ProjectStore` in `init` and
+  calls `POST /preview` on load. Reached two ways: the "View" button on each
+  Data-screen file row (`onPreviewFile`) and tappable `AssistChip`s in the
+  editor's workspace-objects strip (`onPreviewObject`). Navigation is a plain
+  `Screen.PREVIEW` case in `MainActivity.AppRoot` with `previewSource`/
+  `previewName` state set by whichever caller opened it; back returns to
+  `Screen.DATA` for a file preview or `Screen.EDITOR` for an object preview.
 - Plot sharing (`ui/editor/PlotSharing.kt`) writes a decoded PNG to
   `cacheDir/shared` and opens a share sheet via a `FileProvider` declared in the
   manifest (`res/xml/file_paths.xml`); "Copy output" uses the Compose clipboard.
@@ -286,12 +297,28 @@ shadow a same-named data file), making them readable by bare name
 (`read.csv("sales.csv")`); `/reset` also `unlink`s `$data`. The container
 `mem_limit` was raised to `2g` because plumber buffers the whole multipart body in
 memory (operators lowering `R_UPLOAD_MAX_BYTES` can lower it in step).
+`/preview` (`PreviewRequest`/`PreviewResponse`, in `data/model/PreviewModels.kt`,
+reusing `RTable` from `ExecuteModels.kt`): request `source` (`"file"|"object"`) /
+`name` / nullable `sessionId`; response `table` (nullable `RTable`) / `error` /
+`truncated`. Unlike every other endpoint here, `/preview` is **strictly
+read-only** — it never calls `save.image()` or otherwise mutates session
+state — and `table` is a single object, not an array (`/execute`'s `tables` is
+a list; a preview only ever shows one thing). The backend implementation
+reuses the shared `TABLE_EMIT_HELPERS` R source (factored out of `/execute`'s
+handler) so both endpoints emit byte-identical `table*.json`. File preview
+(`source: "file"`) reads a session data file by extension — base R for
+`.csv`/`.tsv`/`.rds`, `readxl`/`arrow` for `.xlsx`/`.parquet` when those
+packages are installed in the session's library, else a friendly install-it
+error; object preview (`source: "object"`) `get()`s the named value from a
+freshly `load()`ed copy of the session's `workspace.RData` (a throwaway
+environment, so the live workspace is untouched either way).
+
 `/execute`, `/reset`, `/install`, `/uninstall`, `/import-legacy`, `/symbols`,
-`/help`, `/upload`, `/data`, and `/delete-data` are the auth/rate-limit-protected
-endpoints (`is_protected` in `plumber.R`). There's no shared schema file — if
-you add a field on one side, add it on the other by hand, and remember the
-backend must emit **unboxed** JSON (see `run.R`) or scalar fields won't
-deserialize.
+`/help`, `/upload`, `/data`, `/delete-data`, and `/preview` are the
+auth/rate-limit-protected endpoints (`is_protected` in `plumber.R`). There's no
+shared schema file — if you add a field on one side, add it on the other by
+hand, and remember the backend must emit **unboxed** JSON (see `run.R`) or
+scalar fields won't deserialize.
 
 ## Current scope / what's deliberately not built yet
 
@@ -329,6 +356,10 @@ screen (`/data` list, `/delete-data`). Uploaded files are symlinked into each
 `/execute` run dir, so code reads them by bare name; they're per-project (they live
 under the project's session) and cleared on session reset / project deletion.
 Tap-to-insert drops a file's quoted name into the editor.
+
+Also built: **data viewer** — `View(df)` for a workspace object or a one-tap
+preview of an uploaded data file, rendered full-screen as a read-only table
+(`POST /preview`, capped at 200 rows) without writing or running any code.
 
 Still **not** built — don't assume these exist: on-device execution, and
 network-egress restriction or per-request VM isolation on the backend.

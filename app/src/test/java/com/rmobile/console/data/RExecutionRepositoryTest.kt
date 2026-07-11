@@ -13,8 +13,11 @@ import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
+import com.rmobile.console.data.model.PreviewRequest
+import com.rmobile.console.data.model.PreviewResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
+import com.rmobile.console.data.model.RTable
 import com.rmobile.console.data.model.SymbolsResponse
 import com.rmobile.console.data.model.UninstallRequest
 import com.rmobile.console.data.model.UninstallResponse
@@ -47,6 +50,11 @@ class RExecutionRepositoryTest {
         }
         override suspend fun help(request: HelpRequest): HelpResponse {
             lastHelp = request; return helpResponse
+        }
+        var previewResponse: PreviewResponse = PreviewResponse(table = RTable(columns = listOf("x")))
+        var lastPreview: PreviewRequest? = null
+        override suspend fun preview(request: PreviewRequest): PreviewResponse {
+            lastPreview = request; return previewResponse
         }
     }
 
@@ -110,5 +118,15 @@ class RExecutionRepositoryTest {
         assertEquals("lm", api.lastHelp!!.topic)
         assertEquals("proj-2", api.lastHelp!!.sessionId)
         assertEquals(HelpResponse(topic = "mean", found = true), result.getOrNull())
+    }
+
+    @Test
+    fun `preview forwards source, name, session and returns the table`() = runTest {
+        val api = FakeApi()
+        val result = RExecutionRepository(api).preview("file", "a.csv", "proj-7")
+        assertEquals("file", api.lastPreview!!.source)
+        assertEquals("a.csv", api.lastPreview!!.name)
+        assertEquals("proj-7", api.lastPreview!!.sessionId)
+        assertEquals(listOf("x"), result.getOrNull()!!.table!!.columns)
     }
 }

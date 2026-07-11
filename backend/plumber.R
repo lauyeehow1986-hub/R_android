@@ -8,6 +8,28 @@ EXECUTION_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_EXECUTION_TIMEOUT_SECONDS"
 MAX_CODE_LENGTH <- as.numeric(Sys.getenv("R_MAX_CODE_LENGTH", "20000"))
 # Max rows delivered per captured table (the true count is still reported).
 TABLE_MAX_ROWS <- as.integer(Sys.getenv("R_TABLE_MAX_ROWS", "200"))
+# Shared R source (a character vector of lines) that defines the table emitter
+# used by both /execute and /preview, so both write byte-identical table*.json.
+# .emit(x): coerce x to a data frame, head() to .maxrows, and write the next
+# table###.json (columns/columnTypes/rows/totalRows) into the working dir.
+# .tabular(v): TRUE for a data frame or a 2-D matrix/table.
+TABLE_EMIT_HELPERS <- c(
+  sprintf('.maxrows <- %d', TABLE_MAX_ROWS),
+  '.emit <- function(x) {',
+  '  df <- if (is.data.frame(x)) x else as.data.frame.matrix(x, stringsAsFactors = FALSE)',
+  '  n <- nrow(df); sub <- utils::head(df, .maxrows)',
+  '  types <- vapply(df, function(cc) class(cc)[1], character(1))',
+  '  cells <- lapply(sub, function(col) if (is.list(col)) vapply(col, function(v) paste(format(v), collapse = ", "), character(1)) else format(col, trim = TRUE))',
+  '  cols <- names(df)',
+  '  rn <- rownames(sub)',
+  '  if (!identical(rn, as.character(seq_len(nrow(sub))))) { cells <- c(list(rn), cells); cols <- c("", cols); types <- c("", types) }',
+  '  rowsOut <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(cc) as.character(cc[i]), character(1))))',
+  '  obj <- list(columns = as.character(cols), columnTypes = as.character(types), rows = rowsOut, totalRows = jsonlite::unbox(as.integer(n)))',
+  '  idx <- length(list.files(".", pattern = "^table[0-9]+\\\\.json$")) + 1L',
+  '  writeLines(jsonlite::toJSON(obj, auto_unbox = FALSE), sprintf("table%03d.json", idx))',
+  '}',
+  '.tabular <- function(v) is.data.frame(v) || ((is.matrix(v) || inherits(v, "table")) && length(dim(v)) == 2)'
+)
 # Max completion symbols returned by GET /symbols.
 SYMBOLS_MAX <- as.integer(Sys.getenv("R_SYMBOLS_MAX", "5000"))
 
@@ -72,7 +94,7 @@ sanitize_data_name <- function(fname) {
 }
 
 # Only the execution endpoint is protected; /health stays open for probes.
-is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy", "/symbols", "/help", "/upload", "/data", "/delete-data")
+is_protected <- function(req) req$PATH_INFO %in% c("/execute", "/reset", "/install", "/uninstall", "/import-legacy", "/symbols", "/help", "/upload", "/data", "/delete-data", "/preview")
 
 #* Require a valid API key on protected routes when one is configured.
 #* @filter auth
@@ -224,21 +246,7 @@ function(req, res) {
     # file. Helpers live inside local({}) so nothing leaks into globalenv (keeping
     # save.image()/workspaceObjects clean); user assignments still target globalenv.
     'local({',
-    sprintf('  .maxrows <- %d', TABLE_MAX_ROWS),
-    '  .emit <- function(x) {',
-    '    df <- if (is.data.frame(x)) x else as.data.frame.matrix(x, stringsAsFactors = FALSE)',
-    '    n <- nrow(df); sub <- utils::head(df, .maxrows)',
-    '    types <- vapply(df, function(cc) class(cc)[1], character(1))',
-    '    cells <- lapply(sub, function(col) if (is.list(col)) vapply(col, function(v) paste(format(v), collapse = ", "), character(1)) else format(col, trim = TRUE))',
-    '    cols <- names(df)',
-    '    rn <- rownames(sub)',
-    '    if (!identical(rn, as.character(seq_len(nrow(sub))))) { cells <- c(list(rn), cells); cols <- c("", cols); types <- c("", types) }',
-    '    rowsOut <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(cc) as.character(cc[i]), character(1))))',
-    '    obj <- list(columns = as.character(cols), columnTypes = as.character(types), rows = rowsOut, totalRows = jsonlite::unbox(as.integer(n)))',
-    '    idx <- length(list.files(".", pattern = "^table[0-9]+\\\\.json$")) + 1L',
-    '    writeLines(jsonlite::toJSON(obj, auto_unbox = FALSE), sprintf("table%03d.json", idx))',
-    '  }',
-    '  .tabular <- function(v) is.data.frame(v) || ((is.matrix(v) || inherits(v, "table")) && length(dim(v)) == 2)',
+    TABLE_EMIT_HELPERS,
     '  .is_print <- function(e) is.call(e) && is.symbol(e[[1]]) && identical(as.character(e[[1]]), "print")',
     '  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if ((r$visible || pr) && .tabular(r$value)) try(.emit(r$value), silent = TRUE); if (r$visible) print(r$value) }',
     sprintf('  .exec(parse(file = %s))', shQuote(entry_rel)),
@@ -517,6 +525,117 @@ function(req, res) {
   pkg <- if (file.exists(out_pkg)) readLines(out_pkg, warn = FALSE)[1] else NULL
 
   list(topic = topic, packageName = pkg, text = text, found = nzchar(text))
+}
+
+#* Preview a data file or a workspace object as a table. Strictly read-only:
+#* never writes session state (no save.image, no history), so it is safe to call
+#* freely. Body: {sessionId?, source: "file"|"object", name}.
+#* @post /preview
+function(req, res) {
+  body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+  source <- body$source
+  name <- body$name
+
+  if (is.null(source) || !is.character(source) || length(source) != 1 || !(source %in% c("file", "object"))) {
+    res$status <- 400
+    return(list(table = NULL, error = "source must be 'file' or 'object'.", truncated = FALSE))
+  }
+  if (identical(source, "file")) {
+    safe <- sanitize_data_name(name)
+    if (is.null(safe)) {
+      res$status <- 400
+      return(list(table = NULL, error = "Invalid file name.", truncated = FALSE))
+    }
+    name <- safe
+  } else {
+    if (is.null(name) || !is.character(name) || length(name) != 1 || !grepl("^[A-Za-z.][A-Za-z0-9._]*$", name)) {
+      res$status <- 400
+      return(list(table = NULL, error = "Invalid object name.", truncated = FALSE))
+    }
+  }
+
+  session_id <- sanitize_session_id(body$sessionId)
+  paths <- session_paths(session_id)
+  dir.create(paths$rlib, recursive = TRUE, showWarnings = FALSE)
+
+  run_dir <- file.path(tempdir(), paste0("preview-", format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", sample.int(1e6, 1)))
+  dir.create(run_dir, recursive = TRUE)
+  on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  script_path <- file.path(run_dir, "preview.R")
+  err_path <- file.path(run_dir, "error.txt")
+
+  # Source-specific snippet that assigns the value to preview into `.df`.
+  if (identical(source, "file")) {
+    src <- file.path(paths$data, name)
+    if (!file.exists(src)) {
+      return(list(table = NULL, error = "No such data file.", truncated = FALSE))
+    }
+    read_lines <- c(
+      sprintf('fname <- %s', shQuote(name)),
+      'ext <- tolower(tools::file_ext(fname))',
+      'need <- function(pkg) if (!requireNamespace(pkg, quietly = TRUE)) stop(sprintf("Install \'%s\' in this project to preview .%s files.", pkg, ext))',
+      '.df <- if (ext == "csv") utils::read.csv(fname, check.names = FALSE)',
+      '  else if (ext %in% c("tsv", "tab")) utils::read.delim(fname, check.names = FALSE)',
+      '  else if (ext == "rds") readRDS(fname)',
+      '  else if (ext %in% c("xlsx", "xls")) { need("readxl"); as.data.frame(readxl::read_excel(fname)) }',
+      '  else if (ext == "parquet") { need("arrow"); as.data.frame(arrow::read_parquet(fname)) }',
+      '  else stop("Can\'t preview this file type.")'
+    )
+  } else {
+    read_lines <- c(
+      sprintf('.nm <- %s', shQuote(name)),
+      sprintf('.e <- new.env(); if (file.exists(%s)) load(%s, envir = .e)', shQuote(paths$workspace), shQuote(paths$workspace)),
+      'if (!exists(.nm, envir = .e, inherits = FALSE)) stop(sprintf("No object named \'%s\' in this project\'s workspace.", .nm))',
+      '.df <- get(.nm, envir = .e)'
+    )
+  }
+
+  script <- c(
+    sprintf('.libPaths(c(%s, .libPaths()))', shQuote(paths$rlib)),
+    'invisible(tryCatch({',
+    read_lines,
+    TABLE_EMIT_HELPERS,
+    'if (!.tabular(.df)) stop("Not a table.")',
+    '.emit(.df)',
+    sprintf('}, error = function(e) writeLines(conditionMessage(e), %s)))', shQuote(err_path))
+  )
+  writeLines(script, script_path)
+
+  # Symlink the data file into the run dir AFTER writing the harness, and only
+  # if the name doesn't collide with a harness file (preview.R/error.txt) — a
+  # data file must never shadow, or be followed-and-overwritten by, our own
+  # files. Mirrors the ordering + file.exists guard used by /execute.
+  if (identical(source, "file")) {
+    link <- file.path(run_dir, name)
+    if (!file.exists(link)) try(file.symlink(src, link), silent = TRUE)
+  }
+
+  result <- tryCatch(
+    processx::run("Rscript", c("--vanilla", script_path), wd = run_dir,
+                  timeout = EXECUTION_TIMEOUT_SECONDS, error_on_status = FALSE),
+    error = function(e) e
+  )
+
+  if (inherits(result, "error")) {
+    timed_out <- grepl("timed out", conditionMessage(result), ignore.case = TRUE)
+    return(list(
+      table = NULL,
+      error = if (timed_out) sprintf("Preview timed out after %ss.", EXECUTION_TIMEOUT_SECONDS) else "Preview failed to start.",
+      truncated = FALSE
+    ))
+  }
+
+  err_msg <- if (file.exists(err_path)) paste(readLines(err_path, warn = FALSE), collapse = "\n") else ""
+  table_file <- file.path(run_dir, "table001.json")
+
+  if (nzchar(err_msg) || !file.exists(table_file)) {
+    msg <- if (nzchar(err_msg)) err_msg else "Could not read a table from this source."
+    return(list(table = NULL, error = msg, truncated = FALSE))
+  }
+
+  tbl <- jsonlite::fromJSON(table_file, simplifyVector = FALSE)
+  total <- tryCatch(as.integer(tbl$totalRows), error = function(e) NA_integer_)
+  list(table = tbl, error = NULL, truncated = isTRUE(total > TABLE_MAX_ROWS))
 }
 
 #* Upload a data file into a session's data dir (multipart/form-data, part "file").

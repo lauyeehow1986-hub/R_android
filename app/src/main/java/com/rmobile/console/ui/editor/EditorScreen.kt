@@ -120,6 +120,7 @@ fun EditorScreen(
     onOpenPackages: () -> Unit,
     onOpenProjects: () -> Unit = {},
     onOpenData: () -> Unit = {},
+    onPreviewObject: (String) -> Unit = {},
     viewModel: EditorViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -301,13 +302,25 @@ fun EditorScreen(
             }
 
             if (uiState.workspaceObjects.isNotEmpty()) {
-                Text(
-                    text = "Workspace: ${uiState.workspaceObjects.joinToString(", ")} " +
-                        "(${uiState.workspaceObjects.size})",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        "Workspace:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    uiState.workspaceObjects.forEach { obj ->
+                        AssistChip(
+                            onClick = { onPreviewObject(obj) },
+                            label = { Text(obj) },
+                        )
+                    }
+                }
             }
 
             OutputPanel(uiState = uiState, modifier = Modifier.weight(1.2f))

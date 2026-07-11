@@ -114,3 +114,9 @@ post_delete_data <- function(server, name, session_id = NULL, key = NULL) {
   if (!is.null(session_id)) body$sessionId <- session_id
   api_request(server, "/delete-data", body = body, key = key)
 }
+
+post_preview <- function(server, source, name, session_id = NULL, key = NULL) {
+  body <- list(source = source, name = name)
+  if (!is.null(session_id)) body$sessionId <- session_id
+  api_request(server, "/preview", body = body, key = key)
+}

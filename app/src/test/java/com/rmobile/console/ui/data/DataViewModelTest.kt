@@ -51,6 +51,8 @@ class DataViewModelTest {
         override suspend fun importLegacy(request: ImportLegacyRequest) = ImportLegacyResponse()
         override suspend fun symbols(sessionId: String) = SymbolsResponse()
         override suspend fun help(request: HelpRequest) = HelpResponse()
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) =
+            com.rmobile.console.data.model.PreviewResponse()
     }
 
     private class FakeDataApi(

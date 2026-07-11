@@ -12,6 +12,8 @@ import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
+import com.rmobile.console.data.model.PreviewRequest
+import com.rmobile.console.data.model.PreviewResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
 import com.rmobile.console.data.model.SymbolsResponse
@@ -60,6 +62,13 @@ class RExecutionRepository(
 
     suspend fun help(topic: String, sessionId: String = DEFAULT_SESSION_ID): Result<HelpResponse> =
         runCatching { api.help(HelpRequest(topic, sessionId)) }
+
+    suspend fun preview(
+        source: String,
+        name: String,
+        sessionId: String = DEFAULT_SESSION_ID,
+    ): Result<PreviewResponse> =
+        runCatching { api.preview(PreviewRequest(source, name, sessionId)) }
 
     suspend fun uploadFile(sessionId: String, file: MultipartBody.Part): Result<UploadResponse> =
         runCatching { dataApi.upload(sessionId, file) }
