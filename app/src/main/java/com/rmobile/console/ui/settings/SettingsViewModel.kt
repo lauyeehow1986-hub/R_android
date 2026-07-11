@@ -6,6 +6,7 @@ import com.rmobile.console.data.ServiceLocator
 import com.rmobile.console.data.network.NetworkModule
 import com.rmobile.console.data.settings.AppSettings
 import com.rmobile.console.data.settings.BaseUrlValidator
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,7 @@ data class SettingsUiState(
     val urlError: String? = null,
     val saved: Boolean = false,
     val connectionTest: ConnectionTest = ConnectionTest.None,
+    val executionEngine: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL,
 )
 
 class SettingsViewModel(
@@ -40,6 +42,7 @@ class SettingsViewModel(
             baseUrl = store.baseUrl,
             apiKey = store.apiKey,
             defaultBaseUrl = store.defaultBaseUrl,
+            executionEngine = store.executionEngine,
         ),
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -50,6 +53,11 @@ class SettingsViewModel(
 
     fun onApiKeyChanged(value: String) {
         _uiState.update { it.copy(apiKey = value, saved = false, connectionTest = ConnectionTest.None) }
+    }
+
+    fun setEngine(choice: ExecutionEngineChoice) {
+        store.executionEngine = choice
+        _uiState.update { it.copy(executionEngine = choice) }
     }
 
     fun resetToDefault() {

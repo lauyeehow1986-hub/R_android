@@ -1,0 +1,3 @@
+# Vendored WebR runtime: treat as binary so git never rewrites line endings
+# (byte-exact across platforms; the emscripten/WASM assets must not be touched).
+app/src/main/assets/webr/dist/** -text

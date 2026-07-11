@@ -105,7 +105,38 @@ class EditorViewModelTest {
         history: InMemoryHistoryStore = InMemoryHistoryStore(),
         scripts: InMemoryScriptStore = InMemoryScriptStore(),
         projects: InMemoryProjectStore = InMemoryProjectStore(),
-    ) = EditorViewModel(RExecutionRepository(api), history, scripts, projects, now = { counter++ })
+        engineProvider: (() -> com.rmobile.console.data.execution.ExecutionEngine)? = null,
+    ): EditorViewModel {
+        val repo = RExecutionRepository(api)
+        return EditorViewModel(
+            repo, history, scripts, projects, now = { counter++ },
+            engineProvider = engineProvider
+                ?: { com.rmobile.console.data.execution.RemoteExecutionEngine(repo) },
+        )
+    }
+
+    private class FakeEngine(val response: com.rmobile.console.data.model.ExecuteResponse) :
+        com.rmobile.console.data.execution.ExecutionEngine {
+        var lastRequest: com.rmobile.console.data.model.ExecuteRequest? = null
+        override suspend fun execute(request: com.rmobile.console.data.model.ExecuteRequest):
+            Result<com.rmobile.console.data.model.ExecuteResponse> {
+            lastRequest = request; return Result.success(response)
+        }
+        override suspend fun reset(sessionId: String) = Result.success(Unit)
+    }
+
+    @Test
+    fun `runCode routes through the selected engine and maps its response`() = runTest {
+        val engine = FakeEngine(ExecuteResponse(stdout = "hi", workspaceObjects = listOf("y")))
+        val vm = viewModel(engineProvider = { engine })
+        vm.onCodeChanged("y <- 1")
+        vm.runCode()
+        advanceUntilIdle()
+
+        assertEquals("hi", vm.uiState.value.stdout)
+        assertEquals(listOf("y"), vm.uiState.value.workspaceObjects)
+        assertEquals("y <- 1", engine.lastRequest!!.files!!.first().content)
+    }
 
     @Test
     fun `creates a default project when none stored`() {

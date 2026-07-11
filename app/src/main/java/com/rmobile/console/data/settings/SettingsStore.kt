@@ -35,6 +35,10 @@ class SettingsStore(context: Context) : HistoryStore, SavedScriptStore, AppSetti
         get() = prefs.getString(KEY_API_KEY, null) ?: ""
         set(value) = prefs.edit().putString(KEY_API_KEY, value).apply()
 
+    override var executionEngine: ExecutionEngineChoice
+        get() = ExecutionEngineChoice.fromStorage(prefs.getString(KEY_ENGINE, null))
+        set(value) = prefs.edit().putString(KEY_ENGINE, value.storageKey).apply()
+
     override val defaultBaseUrl: String get() = BuildConfig.R_EXECUTION_BASE_URL
 
     override fun load(): List<HistoryEntry> {
@@ -76,6 +80,7 @@ class SettingsStore(context: Context) : HistoryStore, SavedScriptStore, AppSetti
         const val PREFS_NAME = "r_mobile_settings"
         const val KEY_BASE_URL = "base_url"
         const val KEY_API_KEY = "api_key"
+        const val KEY_ENGINE = "execution_engine"
         const val KEY_HISTORY = "run_history"
         const val KEY_SCRIPTS = "saved_scripts"
         const val KEY_PROJECTS = "projects"

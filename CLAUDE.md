@@ -11,14 +11,18 @@ independent pieces in this one repo:
 - `app/` — native Android client (Kotlin + Jetpack Compose).
 - `backend/` — a Plumber (R) HTTP service that actually executes R code.
 
-**Why there's a backend at all**: real R can't run on-device. Its
+**Why there's a backend at all**: native R can't run on-device. Its
 interpreter depends on Fortran/C internals that don't build for Android or
 iOS, which is why the existing iOS apps are thin clients too (confirmed:
 they require internet, cap execution at ~20s, and describe themselves as
-"batch compilers"). The alternative — embedding the JVM-based Renjin
-interpreter for offline execution — was considered and explicitly rejected
-for the MVP in favor of full CRAN/package compatibility; see "Execution
-model" below before reviving that idea.
+"batch compilers"). The app now **also** runs R on-device via **WebR** (real
+GNU R compiled to WebAssembly, running in a bundled offscreen WebView) — this
+is the **default "Local" engine**, privacy-preserving (code and data never
+leave the phone) and offline-from-install; the network backend is the opt-in
+"Remote" engine, chosen for full CRAN/package compatibility and heavy work. The
+JVM-based Renjin interpreter remains **rejected** — WebR is actual GNU R, not a
+reimplementation, so it matches CRAN semantics; Renjin would not. See
+`data/execution/` below and "Execution model" before reviving that idea.
 
 ## Commands
 
@@ -43,6 +47,12 @@ instead of the emulator's `10.0.2.2` alias):
 ```bash
 ./gradlew :app:installDebug -PrExecutionBaseUrl=http://192.168.1.23:8000/
 ```
+
+The on-device WebR runtime is **vendored** into the APK (offline-from-install).
+It's not fetched by Gradle — re-vendor it (e.g. to bump WebR versions) by running
+`bash app/src/main/assets/webr/scripts/fetch-webr.sh`, which `npm pack`s WebR and
+copies its `dist/` into `app/src/main/assets/webr/dist/` (committed as binary). See
+`app/src/main/assets/webr/README.md`.
 
 ### Backend (`backend/`)
 
@@ -135,13 +145,37 @@ Retrofit client, not worth a framework yet):
   `HostSelectionInterceptor` that rewrites each request's host/scheme/port (and
   path prefix) to the **runtime-configured** URL and attaches the optional
   `X-API-Key` header — so changing the backend needs no rebuild.
+- `data/execution/` — **swappable execution engines**. `ExecutionEngine` is the
+  interface (`execute(ExecuteRequest): Result<ExecuteResponse>`,
+  `reset(sessionId): Result<Unit>`); both implementations return the **same**
+  `ExecuteResponse` contract, so all downstream UI (output panel, plot decoding,
+  `RTableView`, workspace chips) is engine-agnostic. `RemoteExecutionEngine` wraps
+  `RExecutionRepository` (the network backend). `LocalExecutionEngine` wraps
+  `WebRController` — one persistent **offscreen `WebView`** running bundled WebR
+  (real GNU R → WASM); it serves `app/src/main/assets/webr/` via
+  `WebViewAssetLoader` with injected **COOP/COEP** headers (needed for WebR's
+  `SharedArrayBuffer` channel) and marshals a JS↔Kotlin bridge. The one live WebR
+  instance **is** the local session, so the workspace persists across runs within
+  an app process (but not across app restarts — see boundaries below). The engine
+  is chosen per run from `SettingsStore.executionEngine` via
+  `ServiceLocator.currentExecutionEngine()` (read fresh each run so a Settings
+  toggle takes effect immediately); `EditorViewModel` routes `runCode`/
+  `resetSession` through an `engineProvider`. **Harness parity coupling**:
+  `assets/webr/harness.R` mirrors the backend `/execute` wrapper's `withVisible`
+  loop and duplicates `TABLE_EMIT_HELPERS` from `plumber.R` **byte-for-byte** so
+  both engines emit identical `table*.json` — change one, change the other in the
+  same commit. `assets/webr/bridge.js` boots WebR, runs the harness, and posts
+  `ExecuteResponse`-shaped JSON; `assets/webr/dist/` is the vendored runtime.
 - `data/settings/` — `SettingsStore` (SharedPreferences) persists the backend
-  URL, API key, run history, saved scripts, and **projects**; `BaseUrlValidator`
-  is the pure, unit-tested URL normalizer. `data/history/` holds the
-  `HistoryEntry` model and `RunHistory` (pure list logic). `data/ServiceLocator`
-  is initialized once by `RMobileApplication` and applies persisted settings to
-  `NetworkModule` at startup; the (context-less) ViewModels read it via default
-  constructor args, which is also the seam unit tests inject fakes through.
+  URL, API key, run history, saved scripts, **projects**, and the **execution
+  engine choice** (`ExecutionEngineChoice.LOCAL`/`REMOTE`, default `LOCAL`, via
+  `AppSettings.executionEngine`); `BaseUrlValidator` is the pure, unit-tested URL
+  normalizer. `data/history/` holds the `HistoryEntry` model and `RunHistory`
+  (pure list logic). `data/ServiceLocator` is initialized once by
+  `RMobileApplication` (it holds the app `Context` so it can build the
+  `WebRController`), applies persisted settings to `NetworkModule` at startup, and
+  exposes `currentExecutionEngine()`; the (context-less) ViewModels read it via
+  default constructor args, which is also the seam unit tests inject fakes through.
 - `data/project/` — **multi-file projects**: `Project`/`ProjectFile` models,
   pure unit-tested `ProjectOps` (file/project list ops), and the `ProjectStore`
   interface (implemented by `SettingsStore`). `EditorViewModel` is project-aware
@@ -361,5 +395,21 @@ Also built: **data viewer** — `View(df)` for a workspace object or a one-tap
 preview of an uploaded data file, rendered full-screen as a read-only table
 (`POST /preview`, capped at 200 rows) without writing or running any code.
 
-Still **not** built — don't assume these exist: on-device execution, and
-network-egress restriction or per-request VM isolation on the backend.
+Also built: **on-device execution (WebR)** — a swappable `ExecutionEngine` with a
+**Local** engine (bundled WebR = real GNU R → WASM, in an offscreen WebView) as
+the **default** and the network backend as an opt-in **Remote** engine, chosen by
+a Settings toggle. Both engines return the identical `ExecuteResponse` contract
+(stdout/stderr/plots/tables/workspaceObjects/timedOut), so the UI is
+engine-agnostic; the WebR harness (`assets/webr/harness.R`) mirrors the backend's
+`withVisible` loop + `TABLE_EMIT_HELPERS`. **v1 boundaries (deliberate, not built
+yet)** — the Local engine has **no package install** (only WebR's built-in
+packages), **no data-import** (uploaded files aren't visible to local runs), and
+**no workspace persistence across app restarts** (the live WebR instance is the
+session, so it survives runs within a process but resets on relaunch); **engine
+choice is app-wide, not per-project**. Data & Packages screens carry a note that
+they apply to the Remote engine. These are documented fast-follows.
+
+Still **not** built — don't assume these exist: on-device package installation,
+local-engine data-import, cross-restart local workspace persistence, per-project
+engine choice, and (backend) network-egress restriction in the dev profile or
+per-request VM isolation.
