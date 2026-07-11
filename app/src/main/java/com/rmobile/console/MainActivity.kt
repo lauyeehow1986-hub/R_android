@@ -43,8 +43,8 @@ private fun AppRoot() {
     // justify a navigation library. One EditorViewModel is hoisted here so the
     // editor and the project-library screen share the same project state.
     var screen by rememberSaveable { mutableStateOf(Screen.EDITOR) }
-    var previewSource by remember { mutableStateOf("file") }
-    var previewName by remember { mutableStateOf("") }
+    var previewSource by rememberSaveable { mutableStateOf("file") }
+    var previewName by rememberSaveable { mutableStateOf("") }
     val editorViewModel: EditorViewModel = viewModel()
 
     when (screen) {

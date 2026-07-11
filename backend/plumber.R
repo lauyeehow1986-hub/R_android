@@ -570,7 +570,6 @@ function(req, res) {
     if (!file.exists(src)) {
       return(list(table = NULL, error = "No such data file.", truncated = FALSE))
     }
-    try(file.symlink(src, file.path(run_dir, name)), silent = TRUE)
     read_lines <- c(
       sprintf('fname <- %s', shQuote(name)),
       'ext <- tolower(tools::file_ext(fname))',
@@ -601,6 +600,15 @@ function(req, res) {
     sprintf('}, error = function(e) writeLines(conditionMessage(e), %s)))', shQuote(err_path))
   )
   writeLines(script, script_path)
+
+  # Symlink the data file into the run dir AFTER writing the harness, and only
+  # if the name doesn't collide with a harness file (preview.R/error.txt) — a
+  # data file must never shadow, or be followed-and-overwritten by, our own
+  # files. Mirrors the ordering + file.exists guard used by /execute.
+  if (identical(source, "file")) {
+    link <- file.path(run_dir, name)
+    if (!file.exists(link)) try(file.symlink(src, link), silent = TRUE)
+  }
 
   result <- tryCatch(
     processx::run("Rscript", c("--vanilla", script_path), wd = run_dir,

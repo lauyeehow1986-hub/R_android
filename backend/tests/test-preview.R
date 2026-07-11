@@ -89,3 +89,20 @@ test_that("preview caps rows and reports truncation", {
   expect_equal(pv$body$table$totalRows, 5)
   expect_true(pv$body$truncated)
 })
+
+test_that("previewing a data file named like the harness does not overwrite it", {
+  server <- local_server()
+  f <- file.path(tempdir(), "preview.R")
+  writeLines(c("x,y", "1,2"), f)
+  up <- post_upload(server, f, session_id = "s1")
+  expect_equal(up$status, 200)
+  expect_equal(up$body$name, "preview.R")
+
+  # Preview must not clobber the persisted upload via the run-dir symlink.
+  post_preview(server, "file", up$body$name, session_id = "s1")
+
+  # The uploaded file is still the original CSV, read back from a run.
+  run <- post_execute(server, 'cat(readLines("preview.R"), sep="\n")', session_id = "s1")
+  expect_equal(run$status, 200)
+  expect_match(run$body$stdout, "x,y")
+})
