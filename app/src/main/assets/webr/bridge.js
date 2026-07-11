@@ -6,34 +6,29 @@ import { WebR } from './dist/webr.mjs';
 const baseUrl = new URL('./dist/', document.baseURI).href;
 const webR = new WebR({ baseUrl });
 let ready = false;
-let libraryPersistent = false;
+let userLibReady = false;
 const LOCAL_REPO_URL = new URL('./repo', document.baseURI).href;
+const USER_LIB = '/rmobile/library';
 
-async function mountLibrary() {
-  // The user library dir is always created and put first on .libPaths() so
-  // installs land there. Mounting it on IndexedDB (for cross-restart
-  // persistence) is best-effort: if IDBFS is unavailable in this WebR build,
-  // installs still work for the session but won't survive an app restart.
-  await webR.evalRVoid('dir.create("/rmobile/library", showWarnings = FALSE, recursive = TRUE)');
-  try {
-    await webR.FS.mount('IDBFS', {}, '/rmobile/library');
-    await webR.FS.syncfs(true); // load previously-persisted packages
-    libraryPersistent = true;
-  } catch (e) {
-    libraryPersistent = false; // no IDBFS → in-process-only library
-  }
-  await webR.evalRVoid('.libPaths(c("/rmobile/library", .libPaths()))');
-}
-
-async function persistLibrary() {
-  if (!libraryPersistent) return;
-  try { await webR.FS.syncfs(false); } catch (e) { /* best-effort flush */ }
+// Lazily create a user package library and put it first on .libPaths(), so
+// installs land there and library() finds them. Called on demand by the package
+// ops only — NEVER at boot — so the run path stays byte-identical to the
+// verified baseline. This is an in-process (MEMFS) library: installs work within
+// the app session but do not yet persist across restarts. (An earlier attempt to
+// back this with an IndexedDB FS.mount destabilised the WebR channel and broke
+// all evaluation, so persistence is deferred to a safer snapshot mechanism.)
+async function ensureUserLib() {
+  if (userLibReady) return;
+  await webR.evalRVoid(
+    `dir.create(${JSON.stringify(USER_LIB)}, showWarnings = FALSE, recursive = TRUE); ` +
+    `.libPaths(c(${JSON.stringify(USER_LIB)}, .libPaths()))`
+  );
+  userLibReady = true;
 }
 
 async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
-  await mountLibrary();
   ready = true;
   AndroidBridge.onReady();
 }
@@ -123,10 +118,11 @@ window.webrReset = async (id) => {
 };
 
 // Package management (device-verified). webr::install resolves against the
-// bundled local repo first, then falls back to the online r-wasm CRAN mirror;
-// successful installs are flushed to the persistent IDBFS library.
+// bundled local repo first, then falls back to the online r-wasm CRAN mirror,
+// installing into the lazily-created in-process user library (USER_LIB).
 window.webrInstall = async (id, pkg) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ installed: false, error: 'WebR not ready', stdout: '', stderr: '', timedOut: false, systemRequirements: null })); return; }
+  await ensureUserLib();
   const shelter = await new webR.Shelter();
   try {
     const cap = await shelter.captureR(
@@ -138,7 +134,6 @@ window.webrInstall = async (id, pkg) => {
     const okR = await webR.evalR(`requireNamespace(${JSON.stringify(pkg)}, quietly = TRUE)`);
     const installed = (await okR.toArray())[0] === true;
     webR.destroy(okR);
-    if (installed) await persistLibrary();
     // On failure, surface the real R stderr (last few lines) instead of a guess —
     // it names the actual cause (e.g. a missing dependency or an unreachable repo).
     const detail = (stderr || stdout || '').split('\n').filter((l) => l.trim()).slice(-6).join('\n');
@@ -154,9 +149,9 @@ window.webrInstall = async (id, pkg) => {
 
 window.webrUninstall = async (id, pkg) => {
   try {
-    await webR.evalRVoid(`remove.packages(${JSON.stringify(pkg)}, lib = "/rmobile/library")`);
-    await persistLibrary();
-    const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages(lib.loc = "/rmobile/library"))`);
+    await ensureUserLib();
+    await webR.evalRVoid(`remove.packages(${JSON.stringify(pkg)}, lib = ${JSON.stringify(USER_LIB)})`);
+    const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages(lib.loc = ${JSON.stringify(USER_LIB)}))`);
     const still = (await stillR.toArray())[0] === true;
     webR.destroy(stillR);
     AndroidBridge.onResult(id, JSON.stringify({ removed: !still, error: still ? `${pkg} was not removed.` : null }));
@@ -165,9 +160,11 @@ window.webrUninstall = async (id, pkg) => {
   }
 };
 
+// List only user-installed packages (the USER_LIB), not WebR's built-ins.
 window.webrListPackages = async (id) => {
   try {
-    const r = await webR.evalR('rownames(installed.packages())');
+    await ensureUserLib();
+    const r = await webR.evalR(`rownames(installed.packages(lib.loc = ${JSON.stringify(USER_LIB)}))`);
     const packages = await r.toArray();
     webR.destroy(r);
     AndroidBridge.onResult(id, JSON.stringify({ packages }));
