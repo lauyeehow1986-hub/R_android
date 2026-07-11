@@ -83,6 +83,17 @@ class WebRController(context: Context) {
     /** Clears the WebR global env and returns the bridge's reset JSON. */
     suspend fun reset(): String = callBridge("window.webrReset", null)
 
+    /** Installs a package from the bundled mini-repo and returns the bridge's InstallResponse JSON. */
+    suspend fun installPackage(pkg: String): String =
+        callBridge("window.webrInstall", org.json.JSONObject.quote(pkg))
+
+    /** Removes an installed package and returns the bridge's UninstallResponse JSON. */
+    suspend fun uninstallPackage(pkg: String): String =
+        callBridge("window.webrUninstall", org.json.JSONObject.quote(pkg))
+
+    /** Lists installed packages and returns the bridge's PackagesResponse JSON. */
+    suspend fun listPackages(): String = callBridge("window.webrListPackages", null)
+
     /**
      * Invokes a bridge function that takes the result id as its first argument and
      * (optionally) [jsArg] as its second, and awaits the JSON it posts back.
