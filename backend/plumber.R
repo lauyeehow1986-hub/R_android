@@ -8,6 +8,28 @@ EXECUTION_TIMEOUT_SECONDS <- as.numeric(Sys.getenv("R_EXECUTION_TIMEOUT_SECONDS"
 MAX_CODE_LENGTH <- as.numeric(Sys.getenv("R_MAX_CODE_LENGTH", "20000"))
 # Max rows delivered per captured table (the true count is still reported).
 TABLE_MAX_ROWS <- as.integer(Sys.getenv("R_TABLE_MAX_ROWS", "200"))
+# Shared R source (a character vector of lines) that defines the table emitter
+# used by both /execute and /preview, so both write byte-identical table*.json.
+# .emit(x): coerce x to a data frame, head() to .maxrows, and write the next
+# table###.json (columns/columnTypes/rows/totalRows) into the working dir.
+# .tabular(v): TRUE for a data frame or a 2-D matrix/table.
+TABLE_EMIT_HELPERS <- c(
+  sprintf('.maxrows <- %d', TABLE_MAX_ROWS),
+  '.emit <- function(x) {',
+  '  df <- if (is.data.frame(x)) x else as.data.frame.matrix(x, stringsAsFactors = FALSE)',
+  '  n <- nrow(df); sub <- utils::head(df, .maxrows)',
+  '  types <- vapply(df, function(cc) class(cc)[1], character(1))',
+  '  cells <- lapply(sub, function(col) if (is.list(col)) vapply(col, function(v) paste(format(v), collapse = ", "), character(1)) else format(col, trim = TRUE))',
+  '  cols <- names(df)',
+  '  rn <- rownames(sub)',
+  '  if (!identical(rn, as.character(seq_len(nrow(sub))))) { cells <- c(list(rn), cells); cols <- c("", cols); types <- c("", types) }',
+  '  rowsOut <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(cc) as.character(cc[i]), character(1))))',
+  '  obj <- list(columns = as.character(cols), columnTypes = as.character(types), rows = rowsOut, totalRows = jsonlite::unbox(as.integer(n)))',
+  '  idx <- length(list.files(".", pattern = "^table[0-9]+\\\\.json$")) + 1L',
+  '  writeLines(jsonlite::toJSON(obj, auto_unbox = FALSE), sprintf("table%03d.json", idx))',
+  '}',
+  '.tabular <- function(v) is.data.frame(v) || ((is.matrix(v) || inherits(v, "table")) && length(dim(v)) == 2)'
+)
 # Max completion symbols returned by GET /symbols.
 SYMBOLS_MAX <- as.integer(Sys.getenv("R_SYMBOLS_MAX", "5000"))
 
@@ -224,21 +246,7 @@ function(req, res) {
     # file. Helpers live inside local({}) so nothing leaks into globalenv (keeping
     # save.image()/workspaceObjects clean); user assignments still target globalenv.
     'local({',
-    sprintf('  .maxrows <- %d', TABLE_MAX_ROWS),
-    '  .emit <- function(x) {',
-    '    df <- if (is.data.frame(x)) x else as.data.frame.matrix(x, stringsAsFactors = FALSE)',
-    '    n <- nrow(df); sub <- utils::head(df, .maxrows)',
-    '    types <- vapply(df, function(cc) class(cc)[1], character(1))',
-    '    cells <- lapply(sub, function(col) if (is.list(col)) vapply(col, function(v) paste(format(v), collapse = ", "), character(1)) else format(col, trim = TRUE))',
-    '    cols <- names(df)',
-    '    rn <- rownames(sub)',
-    '    if (!identical(rn, as.character(seq_len(nrow(sub))))) { cells <- c(list(rn), cells); cols <- c("", cols); types <- c("", types) }',
-    '    rowsOut <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(cc) as.character(cc[i]), character(1))))',
-    '    obj <- list(columns = as.character(cols), columnTypes = as.character(types), rows = rowsOut, totalRows = jsonlite::unbox(as.integer(n)))',
-    '    idx <- length(list.files(".", pattern = "^table[0-9]+\\\\.json$")) + 1L',
-    '    writeLines(jsonlite::toJSON(obj, auto_unbox = FALSE), sprintf("table%03d.json", idx))',
-    '  }',
-    '  .tabular <- function(v) is.data.frame(v) || ((is.matrix(v) || inherits(v, "table")) && length(dim(v)) == 2)',
+    TABLE_EMIT_HELPERS,
     '  .is_print <- function(e) is.call(e) && is.symbol(e[[1]]) && identical(as.character(e[[1]]), "print")',
     '  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if ((r$visible || pr) && .tabular(r$value)) try(.emit(r$value), silent = TRUE); if (r$visible) print(r$value) }',
     sprintf('  .exec(parse(file = %s))', shQuote(entry_rel)),
