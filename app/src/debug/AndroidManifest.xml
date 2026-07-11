@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only manifest overlay. The manifest merger adds
+  android:networkSecurityConfig to <application> for debug builds so the Remote
+  engine can reach a plain-http:// self-hosted backend during development.
+  Release builds don't include this overlay and keep cleartext denied.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:networkSecurityConfig="@xml/network_security_config" />
+</manifest>

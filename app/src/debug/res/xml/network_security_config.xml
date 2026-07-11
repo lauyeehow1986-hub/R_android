@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only: permit cleartext (plain HTTP) traffic. The R execution backend is
+  user-hosted at a runtime-configurable URL that is commonly plain http:// on a
+  LAN (e.g. the emulator alias http://10.0.2.2:8000 or a phone on the same
+  network), which Android blocks by default on targetSdk >= 28. This config
+  applies ONLY to debug builds (app/src/debug/); release builds keep the strict
+  default (cleartext denied).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
