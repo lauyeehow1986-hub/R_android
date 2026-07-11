@@ -1,6 +1,7 @@
 package com.rmobile.console.ui.settings
 
 import com.rmobile.console.data.settings.AppSettings
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -21,6 +22,7 @@ class SettingsViewModelTest {
         override var baseUrl: String = "http://10.0.2.2:8000/",
         override var apiKey: String = "",
         override val defaultBaseUrl: String = "http://10.0.2.2:8000/",
+        override var executionEngine: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL,
     ) : AppSettings
 
     @Test

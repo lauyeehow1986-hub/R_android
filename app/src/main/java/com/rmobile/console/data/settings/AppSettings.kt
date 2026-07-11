@@ -8,5 +8,6 @@ package com.rmobile.console.data.settings
 interface AppSettings {
     var baseUrl: String
     var apiKey: String
+    var executionEngine: ExecutionEngineChoice
     val defaultBaseUrl: String
 }
