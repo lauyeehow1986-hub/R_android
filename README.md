@@ -1,11 +1,12 @@
 # R Mobile (Android)
 
-An Android client for writing and running R code on your phone, backed by a
-small server-side execution service — the Android counterpart to iOS apps
-like "R Programming Compiler". Real R can't run on-device (its interpreter
-depends on Fortran/C internals that don't build for mobile), so the app is a
-thin client: you write R, the app sends it to `/backend`, and the response
-(console output + plots) renders back in the app.
+An Android client for writing and running R code on your phone — the Android
+counterpart to iOS apps like "R Programming Compiler". It runs R two ways: a
+default **on-device** engine (WebR — real GNU R compiled to WebAssembly, bundled
+in the app, so your code and data never leave the phone and work offline), and an
+opt-in **backend** engine (a small server-side execution service) for full CRAN
+package compatibility and heavier work. Either way you write R, tap Run, and the
+response (console output + plots + tables) renders back in the app.
 
 See `CLAUDE.md` for architecture, conventions, and how the pieces fit
 together. See `backend/README.md` for backend-specific setup and — important
@@ -28,6 +29,14 @@ together. See `backend/README.md` for backend-specific setup and — important
 
 ## Features
 
+- **On-device execution (WebR)** — run R fully offline with a bundled WebR
+  runtime (real GNU R → WebAssembly); this **Local** engine is the default and
+  keeps code and data on the phone. Switch to the **Remote** (backend) engine in
+  Settings for full CRAN package support. Both produce the same output
+  (stdout/stderr, plots, tables, workspace). *v1 limits:* the Local engine uses
+  only WebR's built-in packages, can't see uploaded data files, and its workspace
+  resets when the app restarts — data import and installed packages apply to the
+  Remote engine.
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
 - **R syntax highlighting** and a **quick-insert bar** for common operators
   (`<-`, `|>`, `%>%`, `()`, …).
@@ -64,7 +73,9 @@ together. See `backend/README.md` for backend-specific setup and — important
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
-Not built yet: on-device execution, iOS-app feature parity.
+Not built yet: on-device package installation, local-engine data import,
+cross-restart local workspace persistence, per-project engine choice, iOS-app
+feature parity.
 
 ## Development
 

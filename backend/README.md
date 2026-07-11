@@ -5,6 +5,15 @@ subprocess and returns its stdout, stderr, and any plots as base64 PNGs. This
 is what the Android app in `/app` talks to — see the root `CLAUDE.md` for how
 the two fit together.
 
+> **Note — this backend is one of two engines.** The app also runs R **on-device**
+> via a bundled WebR (GNU R → WebAssembly) "Local" engine, with this backend as the
+> opt-in "Remote" engine. The Local engine emits the **same** `ExecuteResponse` /
+> `RTable` contract as `/execute` here, and its in-WebView R harness
+> (`app/src/main/assets/webr/harness.R`) mirrors this file's `withVisible` loop and
+> **must stay byte-compatible with `TABLE_EMIT_HELPERS` in `plumber.R`** — if you
+> change table capture here, change the harness in the same commit (and vice-versa)
+> so both engines produce identical `table*.json`.
+
 ## Running locally
 
 ```bash
