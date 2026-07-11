@@ -6,10 +6,26 @@ import { WebR } from './dist/webr.mjs';
 const baseUrl = new URL('./dist/', document.baseURI).href;
 const webR = new WebR({ baseUrl });
 let ready = false;
+const LOCAL_REPO_URL = new URL('./repo', document.baseURI).href;
+
+async function mountLibrary() {
+  // Persist installed packages across app restarts via an IndexedDB-backed VFS
+  // dir that is first on .libPaths(). Verified on-device; if IDBFS is not
+  // available in this WebR build, see the snapshot fallback note in the plan.
+  await webR.evalRVoid('dir.create("/rmobile/library", showWarnings = FALSE, recursive = TRUE)');
+  await webR.FS.mount('IDBFS', {}, '/rmobile/library');
+  await webR.FS.syncfs(true); // load previously-persisted packages
+  await webR.evalRVoid('.libPaths(c("/rmobile/library", .libPaths()))');
+}
+
+async function persistLibrary() {
+  try { await webR.FS.syncfs(false); } catch (e) { /* best-effort flush */ }
+}
 
 async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
+  await mountLibrary();
   ready = true;
   AndroidBridge.onReady();
 }
@@ -96,4 +112,55 @@ window.webrRun = async (id, requestJson) => {
 window.webrReset = async (id) => {
   try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); AndroidBridge.onResult(id, JSON.stringify({ ok: true })); }
   catch (e) { AndroidBridge.onResult(id, JSON.stringify({ ok: false, error: String(e) })); }
+};
+
+// Package management (device-verified). webr::install resolves against the
+// bundled local repo first, then falls back to the online r-wasm CRAN mirror;
+// successful installs are flushed to the persistent IDBFS library.
+window.webrInstall = async (id, pkg) => {
+  if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ installed: false, error: 'WebR not ready', stdout: '', stderr: '', timedOut: false, systemRequirements: null })); return; }
+  const shelter = await new webR.Shelter();
+  try {
+    const cap = await shelter.captureR(
+      `webr::install(${JSON.stringify(pkg)}, repos = c(${JSON.stringify(LOCAL_REPO_URL)}, "https://repo.r-wasm.org"))`,
+      { withAutoprint: false, captureStreams: true }
+    );
+    const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
+    const stderr = cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n');
+    const okR = await webR.evalR(`requireNamespace(${JSON.stringify(pkg)}, quietly = TRUE)`);
+    const installed = (await okR.toArray())[0] === true;
+    webR.destroy(okR);
+    if (installed) await persistLibrary();
+    AndroidBridge.onResult(id, JSON.stringify({
+      installed, stdout, stderr,
+      error: installed ? null : `Could not install ${pkg} (not in the bundled repo and not reachable online?).`,
+      timedOut: false, systemRequirements: null,
+    }));
+  } catch (e) {
+    AndroidBridge.onResult(id, JSON.stringify({ installed: false, stdout: '', stderr: String(e), error: String(e), timedOut: false, systemRequirements: null }));
+  } finally { shelter.purge(); }
+};
+
+window.webrUninstall = async (id, pkg) => {
+  try {
+    await webR.evalRVoid(`remove.packages(${JSON.stringify(pkg)}, lib = "/rmobile/library")`);
+    await persistLibrary();
+    const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages())`);
+    const still = (await stillR.toArray())[0] === true;
+    webR.destroy(stillR);
+    AndroidBridge.onResult(id, JSON.stringify({ removed: !still, error: still ? `${pkg} was not removed.` : null }));
+  } catch (e) {
+    AndroidBridge.onResult(id, JSON.stringify({ removed: false, error: String(e) }));
+  }
+};
+
+window.webrListPackages = async (id) => {
+  try {
+    const r = await webR.evalR('rownames(installed.packages())');
+    const packages = await r.toArray();
+    webR.destroy(r);
+    AndroidBridge.onResult(id, JSON.stringify({ packages }));
+  } catch (e) {
+    AndroidBridge.onResult(id, JSON.stringify({ packages: [] }));
+  }
 };
