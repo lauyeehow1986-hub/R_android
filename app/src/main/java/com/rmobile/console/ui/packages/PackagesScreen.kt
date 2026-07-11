@@ -72,7 +72,10 @@ fun PackagesScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Installed packages apply to the Remote engine.",
+                if (uiState.engineIsLocal)
+                    "On-device (Local) package library. Core tidyverse/easystats packages install offline; others download on demand."
+                else
+                    "Installed packages apply to the Remote engine.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -100,8 +103,10 @@ fun PackagesScreen(
                 }
             }
 
-            TextButton(onClick = viewModel::importLegacy) {
-                Text("Import packages from legacy library")
+            if (!uiState.engineIsLocal) {
+                TextButton(onClick = viewModel::importLegacy) {
+                    Text("Import packages from legacy library")
+                }
             }
 
             uiState.message?.let { message ->
