@@ -57,6 +57,10 @@ together. See `backend/README.md` for backend-specific setup and — important
   project's session and read them in code by name (`read.csv("sales.csv")`), from a
   dedicated **Data** screen (upload / list / delete). Tap a file to insert its name
   into the editor.
+- **Data viewer** — preview tabular data as a table without writing code: tap
+  an uploaded file on the **Data** screen (CSV/TSV/RDS, plus Excel/Parquet when
+  `readxl`/`arrow` are installed), or tap a data-frame variable in the editor's
+  workspace strip to `View()` it. Opens full-screen, capped at 200 rows.
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
