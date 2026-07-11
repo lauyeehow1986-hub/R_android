@@ -33,7 +33,11 @@ function parsePackages(text) {
       .flatMap((k) => (fields[k] || '').split(','))
       .map((d) => d.replace(/\(.*?\)/g, '').trim())
       .filter(Boolean);
-    out[fields.Package] = { version: fields.Version, deps };
+    // Keep the full upstream control block verbatim: WebR reads the local
+    // PACKAGES to resolve dependencies, so the vendored index MUST carry
+    // Depends/Imports/LinkingTo (and MD5sum) — not just Package/Version — or a
+    // seed package installs without its deps and fails to load.
+    out[fields.Package] = { version: fields.Version, deps, raw: block.trim() };
   }
   return out;
 }
@@ -75,9 +79,9 @@ async function main() {
     totalBytes += buf.length;
     await writeFile(join(DEST, file), buf);
     console.log(`ok (${(buf.length/1024).toFixed(0)} KB)`);
-    localBlocks.push(`Package: ${name}\nVersion: ${ver}\n`);
+    localBlocks.push(index[name].raw); // full upstream block (deps + MD5sum)
   }
-  await writeFile(join(DEST, 'PACKAGES'), localBlocks.join('\n') + '\n');
+  await writeFile(join(DEST, 'PACKAGES'), localBlocks.join('\n\n') + '\n');
   console.log(`Wrote ${names.length} packages, ${(totalBytes/1048576).toFixed(1)} MB total, into ${DEST}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

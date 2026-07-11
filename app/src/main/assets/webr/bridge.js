@@ -139,9 +139,12 @@ window.webrInstall = async (id, pkg) => {
     const installed = (await okR.toArray())[0] === true;
     webR.destroy(okR);
     if (installed) await persistLibrary();
+    // On failure, surface the real R stderr (last few lines) instead of a guess —
+    // it names the actual cause (e.g. a missing dependency or an unreachable repo).
+    const detail = (stderr || stdout || '').split('\n').filter((l) => l.trim()).slice(-6).join('\n');
     AndroidBridge.onResult(id, JSON.stringify({
       installed, stdout, stderr,
-      error: installed ? null : `Could not install ${pkg} (not in the bundled repo and not reachable online?).`,
+      error: installed ? null : (`Could not install ${pkg}.` + (detail ? `\n${detail}` : ' No details were captured.')),
       timedOut: false, systemRequirements: null,
     }));
   } catch (e) {
