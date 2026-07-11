@@ -1,22 +1,36 @@
 package com.rmobile.console.data
 
 import android.content.Context
+import com.rmobile.console.data.execution.ExecutionEngine
+import com.rmobile.console.data.execution.LocalExecutionEngine
+import com.rmobile.console.data.execution.RemoteExecutionEngine
+import com.rmobile.console.data.execution.WebRController
 import com.rmobile.console.data.network.NetworkModule
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import com.rmobile.console.data.settings.SettingsStore
 
-/**
- * Tiny manual service locator. Initialized once from [RMobileApplication] and
- * read by the (context-less) ViewModels' default constructors. Production only —
- * unit tests inject their own fakes and never touch this.
- */
 object ServiceLocator {
-
     lateinit var settingsStore: SettingsStore
         private set
+    private lateinit var appContext: Context
+
+    private val remoteEngine: ExecutionEngine by lazy {
+        RemoteExecutionEngine(RExecutionRepository(NetworkModule.rExecutionApi))
+    }
+    private val localEngine: ExecutionEngine by lazy {
+        LocalExecutionEngine(WebRController(appContext))
+    }
 
     fun init(context: Context) {
+        appContext = context.applicationContext
         settingsStore = SettingsStore(context)
-        // Apply persisted settings to the network layer before any request runs.
         NetworkModule.updateConfig(settingsStore.baseUrl, settingsStore.apiKey)
     }
+
+    /** The engine for the currently-selected setting; read fresh each run so a toggle takes effect immediately. */
+    fun currentExecutionEngine(): ExecutionEngine =
+        when (settingsStore.executionEngine) {
+            ExecutionEngineChoice.LOCAL -> localEngine
+            ExecutionEngineChoice.REMOTE -> remoteEngine
+        }
 }

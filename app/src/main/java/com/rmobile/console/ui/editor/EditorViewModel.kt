@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.ServiceLocator
+import com.rmobile.console.data.execution.ExecutionEngine
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.history.RunHistory
 import com.rmobile.console.data.model.ExecFile
+import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.network.NetworkModule
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectArchive
@@ -30,6 +32,7 @@ class EditorViewModel(
     private val scriptStore: SavedScriptStore = ServiceLocator.settingsStore,
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
     private val now: () -> Long = System::currentTimeMillis,
+    private val engineProvider: () -> ExecutionEngine = { ServiceLocator.currentExecutionEngine() },
 ) : ViewModel() {
 
     private val _uiState: MutableStateFlow<EditorUiState>
@@ -233,7 +236,7 @@ class EditorViewModel(
     fun resetSession() {
         val session = ProjectSession.of(_uiState.value.project)
         viewModelScope.launch {
-            repository.reset(session)
+            engineProvider().reset(session)
                 .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
                 .onFailure { t -> _uiState.update { it.copy(errorMessage = t.message ?: "Failed to reset the session.") } }
         }
@@ -252,7 +255,8 @@ class EditorViewModel(
         val files = project.files.map { ExecFile(it.name, it.content) }
         val session = ProjectSession.of(project)
         viewModelScope.launch {
-            repository.run(files, project.entryFileName, session)
+            val request = ExecuteRequest(sessionId = session, files = files, entryFile = project.entryFileName)
+            engineProvider().execute(request)
                 .onSuccess { response ->
                     _uiState.update {
                         it.copy(
