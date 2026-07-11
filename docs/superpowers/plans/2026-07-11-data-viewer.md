@@ -756,13 +756,18 @@ git commit -m "app: PreviewViewModel + state (session-scoped)"
 **Files:**
 - Create: `app/src/main/java/com/rmobile/console/ui/preview/PreviewScreen.kt`
 
+> **Note:** `RTableView` (`ui/editor/RTableView.kt`) already renders a built-in
+> "Showing X of N rows" footer when `table.totalRows > table.rows.size`, so the
+> preview screen does NOT add its own truncation subtitle (that would duplicate
+> it). The top bar shows only the name. `truncated`/`totalRows` in the UI state
+> stay populated but are not displayed here.
+
 - [ ] **Step 1: Create the screen.** Create `app/src/main/java/com/rmobile/console/ui/preview/PreviewScreen.kt`:
 
 ```kotlin
 package com.rmobile.console.ui.preview
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -800,17 +805,7 @@ fun PreviewScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text(if (state.title.isBlank()) name else state.title)
-                        if (state.truncated) {
-                            Text(
-                                "showing ${com.rmobile.console.ui.editor.RTABLE_MAX_ROWS_LABEL} of ${state.totalRows} rows",
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                    }
-                },
+                title = { Text(if (state.title.isBlank()) name else state.title) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -831,24 +826,15 @@ fun PreviewScreen(
 }
 ```
 
-- [ ] **Step 2: Provide the row-count label constant.** The subtitle needs the cap value. In `app/src/main/java/com/rmobile/console/ui/editor/RTableView.kt`, if there is not already a public constant for the 200-row cap, add one near the top of the file (module-level):
-
-```kotlin
-/** Server-side row cap for captured/previewed tables (matches R_TABLE_MAX_ROWS). */
-const val RTABLE_MAX_ROWS_LABEL = 200
-```
-
-If such a constant already exists under a different name, use that name in `PreviewScreen` instead and skip this step.
-
-- [ ] **Step 3: Verify it compiles (assembleDebug).**
+- [ ] **Step 2: Verify it compiles (assembleDebug).**
 
 Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleDebug`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 4: Commit.**
+- [ ] **Step 3: Commit.**
 
 ```bash
-git add app/src/main/java/com/rmobile/console/ui/preview/PreviewScreen.kt app/src/main/java/com/rmobile/console/ui/editor/RTableView.kt
+git add app/src/main/java/com/rmobile/console/ui/preview/PreviewScreen.kt
 git commit -m "app: full-screen PreviewScreen reusing RTableView"
 ```
 
