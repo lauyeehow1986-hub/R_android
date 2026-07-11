@@ -88,7 +88,7 @@ echo "Vendored WebR ${VERSION} into $DEST"
 
 Create `app/src/main/assets/webr/README.md` documenting: WebR 0.4.2, vendored via `scripts/fetch-webr.sh` (`npm pack webr@0.4.2` → copy `package/dist/`), the `dist/` directory is committed so the app is offline-from-install, and the license (WebR is GPL — note it here).
 
-Run it locally: `bash app/src/main/assets/webr/scripts/fetch-webr.sh`. Verify `dist/webr.mjs`, `dist/R.bin.wasm`, `dist/R.bin.data`, and the worker/service-worker JS exist. Commit `dist/`.
+Run it locally: `bash app/src/main/assets/webr/scripts/fetch-webr.sh`. Verify `dist/webr.mjs`, `dist/R.bin.wasm`, the `dist/vfs/` directory (the base-R filesystem image in WebR 0.4.2 — there is no single `R.bin.data`), and the worker/service-worker JS exist. Commit `dist/` (mark it binary via `.gitattributes`: `app/src/main/assets/webr/dist/** -text`).
 
 > If npm/internet is unavailable in the execution environment, create the script + README and note in the task result that `dist/` must be populated by running the script on a networked machine before the app will build a working local engine. The Kotlin/JS code below does not depend on `dist/` to compile.
 
