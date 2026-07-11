@@ -51,6 +51,31 @@ request for `*.data.gz` 404s with *"Can't download filesystem image data"*.
 rewrites each `*.js.metadata` to `"gzip":false`, so WebR fetches the `*.data`
 directly (which survives AAPT untouched). Do not re-introduce `.gz` assets here.
 
+## Bundled package repo (`repo/`)
+
+The Local engine can install R packages on-device. A small, curated set installs
+**fully offline** from a mini-repo bundled here; anything else downloads from
+WebR's public repo (`https://repo.r-wasm.org`). The bridge calls
+`webr::install(pkg, repos = c(<bundled repo>, "https://repo.r-wasm.org"))`, so the
+bundled repo is searched first and the network is the fallback.
+
+- `repo/bin/emscripten/contrib/<R-minor>/` mirrors r-wasm's binary layout: a
+  `PACKAGES` index plus `<pkg>_<ver>.tgz` WASM binaries.
+- `scripts/fetch-webr-packages.mjs` (run via `scripts/fetch-webr-packages.sh`,
+  needs Node 18+ and internet) resolves the **full recursive dependency closure**
+  of the seed set from r-wasm and vendors every `.tgz`, then writes a local
+  `PACKAGES`. The seed set is a single array at the top of the `.mjs`
+  (tidyverse core: dplyr, tidyr, ggplot2, readr, stringr, tibble, purrr, forcats,
+  lubridate; easystats core: parameters, performance, effectsize, insight,
+  datawizard; plus jsonlite, cli). Edit it to change what ships offline.
+- These are `.tgz`, not `.gz`, so the AAPT auto-gunzip issue that affects the VFS
+  images (above) does **not** apply — do not introduce bare `.gz` files under
+  `repo/`.
+- Installed packages land in an IndexedDB-backed `/rmobile/library` (first on
+  `.libPaths()`), so they persist across app restarts when the WebR build provides
+  IDBFS; otherwise the library is in-process only (installs still work, but reset
+  on relaunch).
+
 ## License
 
 WebR is distributed under the **GPL** (GNU General Public License) — the same
