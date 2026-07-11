@@ -608,6 +608,15 @@ function(req, res) {
     error = function(e) e
   )
 
+  if (inherits(result, "error")) {
+    timed_out <- grepl("timed out", conditionMessage(result), ignore.case = TRUE)
+    return(list(
+      table = NULL,
+      error = if (timed_out) sprintf("Preview timed out after %ss.", EXECUTION_TIMEOUT_SECONDS) else "Preview failed to start.",
+      truncated = FALSE
+    ))
+  }
+
   err_msg <- if (file.exists(err_path)) paste(readLines(err_path, warn = FALSE), collapse = "\n") else ""
   table_file <- file.path(run_dir, "table001.json")
 

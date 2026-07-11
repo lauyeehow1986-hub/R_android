@@ -76,3 +76,16 @@ test_that("preview rejects a bad object name with 400", {
   pv <- post_preview(server, "object", "no spaces!", session_id = "s1")
   expect_equal(pv$status, 400)
 })
+
+test_that("preview caps rows and reports truncation", {
+  server <- local_server(env = list(R_TABLE_MAX_ROWS = "3"))
+  csv <- tempfile(fileext = ".csv")
+  writeLines(c("x", "1", "2", "3", "4", "5"), csv)
+  up <- post_upload(server, csv, session_id = "s1")
+
+  pv <- post_preview(server, "file", up$body$name, session_id = "s1")
+  expect_equal(pv$status, 200)
+  expect_equal(length(pv$body$table$rows), 3)
+  expect_equal(pv$body$table$totalRows, 5)
+  expect_true(pv$body$truncated)
+})
