@@ -6,19 +6,27 @@ import { WebR } from './dist/webr.mjs';
 const baseUrl = new URL('./dist/', document.baseURI).href;
 const webR = new WebR({ baseUrl });
 let ready = false;
+let libraryPersistent = false;
 const LOCAL_REPO_URL = new URL('./repo', document.baseURI).href;
 
 async function mountLibrary() {
-  // Persist installed packages across app restarts via an IndexedDB-backed VFS
-  // dir that is first on .libPaths(). Verified on-device; if IDBFS is not
-  // available in this WebR build, see the snapshot fallback note in the plan.
+  // The user library dir is always created and put first on .libPaths() so
+  // installs land there. Mounting it on IndexedDB (for cross-restart
+  // persistence) is best-effort: if IDBFS is unavailable in this WebR build,
+  // installs still work for the session but won't survive an app restart.
   await webR.evalRVoid('dir.create("/rmobile/library", showWarnings = FALSE, recursive = TRUE)');
-  await webR.FS.mount('IDBFS', {}, '/rmobile/library');
-  await webR.FS.syncfs(true); // load previously-persisted packages
+  try {
+    await webR.FS.mount('IDBFS', {}, '/rmobile/library');
+    await webR.FS.syncfs(true); // load previously-persisted packages
+    libraryPersistent = true;
+  } catch (e) {
+    libraryPersistent = false; // no IDBFS → in-process-only library
+  }
   await webR.evalRVoid('.libPaths(c("/rmobile/library", .libPaths()))');
 }
 
 async function persistLibrary() {
+  if (!libraryPersistent) return;
   try { await webR.FS.syncfs(false); } catch (e) { /* best-effort flush */ }
 }
 
@@ -145,7 +153,7 @@ window.webrUninstall = async (id, pkg) => {
   try {
     await webR.evalRVoid(`remove.packages(${JSON.stringify(pkg)}, lib = "/rmobile/library")`);
     await persistLibrary();
-    const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages())`);
+    const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages(lib.loc = "/rmobile/library"))`);
     const still = (await stillR.toArray())[0] === true;
     webR.destroy(stillR);
     AndroidBridge.onResult(id, JSON.stringify({ removed: !still, error: still ? `${pkg} was not removed.` : null }));
