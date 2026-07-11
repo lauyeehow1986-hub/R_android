@@ -69,9 +69,12 @@ async function runOnce(req) {
   for (const f of files) {
     await webR.FS.writeFile(`/rmobile/run/${f.name}`, new TextEncoder().encode(f.content));
   }
-  // Load the harness template and inject the entry file path.
+  // Load the harness template and inject the entry file path. Normalise line
+  // endings: a CRLF checkout (Windows autocrlf) would otherwise leave a stray \r
+  // after `local({`, which WebR's R parser rejects as an "unexpected invalid
+  // token", breaking every run. Strip it here so the harness parses regardless.
   const harnessBytes = await (await fetch('./harness.R')).arrayBuffer();
-  const harness = new TextDecoder().decode(harnessBytes);
+  const harness = new TextDecoder().decode(harnessBytes).replace(/\r\n?/g, '\n');
   await webR.objs.globalEnv.bind('.RMOBILE_ENTRY', entry);
 
   const shelter = await new webR.Shelter();
