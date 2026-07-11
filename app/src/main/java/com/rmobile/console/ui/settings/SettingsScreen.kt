@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +34,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +64,30 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Text("Execution engine", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Local runs R on your device with WebR — your code and data never leave the phone. Remote sends code to the backend for full package compatibility.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = uiState.executionEngine == ExecutionEngineChoice.LOCAL,
+                    onClick = { viewModel.setEngine(ExecutionEngineChoice.LOCAL) },
+                    label = { Text("Local (on-device)") },
+                )
+                FilterChip(
+                    selected = uiState.executionEngine == ExecutionEngineChoice.REMOTE,
+                    onClick = { viewModel.setEngine(ExecutionEngineChoice.REMOTE) },
+                    label = { Text("Remote (backend)") },
+                )
+            }
+            Text(
+                "Data files and installed packages apply to the Remote engine. Local runs use only WebR's built-in packages.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
             Text("Backend", style = MaterialTheme.typography.titleMedium)
             Text(
                 "The R execution service the app sends code to. Changes apply to the next run — no rebuild needed.",

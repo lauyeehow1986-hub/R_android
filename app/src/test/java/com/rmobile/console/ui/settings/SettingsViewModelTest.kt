@@ -74,6 +74,15 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `setEngine persists the choice and updates state`() {
+        val store = FakeSettings()
+        val vm = SettingsViewModel(store = store, probeHealth = { _, _ -> Result.success(Unit) })
+        vm.setEngine(ExecutionEngineChoice.REMOTE)
+        assertEquals(ExecutionEngineChoice.REMOTE, store.executionEngine)
+        assertEquals(ExecutionEngineChoice.REMOTE, vm.uiState.value.executionEngine)
+    }
+
+    @Test
     fun `testConnection on an invalid url sets the url error and skips the probe`() = runTest {
         var probed = false
         val vm = SettingsViewModel(FakeSettings()) { _, _ -> probed = true; Result.success(Unit) }
