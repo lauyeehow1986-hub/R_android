@@ -72,6 +72,9 @@ class EditorViewModelTest {
             helpError?.let { throw it }
             return helpResponse
         }
+
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) =
+            com.rmobile.console.data.model.PreviewResponse()
     }
 
     private class InMemoryHistoryStore(initial: List<HistoryEntry> = emptyList()) : HistoryStore {

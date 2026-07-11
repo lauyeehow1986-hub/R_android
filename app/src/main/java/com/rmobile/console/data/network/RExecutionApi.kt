@@ -9,6 +9,8 @@ import com.rmobile.console.data.model.ImportLegacyResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
+import com.rmobile.console.data.model.PreviewRequest
+import com.rmobile.console.data.model.PreviewResponse
 import com.rmobile.console.data.model.ResetRequest
 import com.rmobile.console.data.model.ResetResponse
 import com.rmobile.console.data.model.SymbolsResponse
@@ -44,4 +46,7 @@ interface RExecutionApi {
 
     @POST("help")
     suspend fun help(@Body request: HelpRequest): HelpResponse
+
+    @POST("preview")
+    suspend fun preview(@Body request: PreviewRequest): PreviewResponse
 }

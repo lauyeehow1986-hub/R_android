@@ -60,6 +60,8 @@ class PackagesViewModelTest {
         override suspend fun symbols(sessionId: String) = com.rmobile.console.data.model.SymbolsResponse()
         override suspend fun help(request: com.rmobile.console.data.model.HelpRequest) =
             com.rmobile.console.data.model.HelpResponse()
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) =
+            com.rmobile.console.data.model.PreviewResponse()
     }
 
     private class InMemoryProjectStore(initial: List<Project> = emptyList(), var lastId: Long? = null) : ProjectStore {
