@@ -82,6 +82,10 @@ class WebRController(context: Context) {
      * (optionally) [jsArg] as its second, and awaits the JSON it posts back.
      */
     private suspend fun callBridge(fn: String, jsArg: String?): String {
+        // Build the WebView (which starts loading the WebR page, and is what
+        // eventually fires onReady) on the main thread BEFORE awaiting readiness —
+        // otherwise `ready` can never complete and the first call deadlocks.
+        withContext(Dispatchers.Main) { webView }
         ready.await()
         val id = nextId.incrementAndGet()
         val deferred = CompletableDeferred<String>()
