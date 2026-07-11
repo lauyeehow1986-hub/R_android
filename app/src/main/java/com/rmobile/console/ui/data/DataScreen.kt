@@ -43,6 +43,7 @@ import okhttp3.MultipartBody
 fun DataScreen(
     onBack: () -> Unit,
     onInsertFileName: (String) -> Unit,
+    onPreviewFile: (String) -> Unit,
     viewModel: DataViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -110,6 +111,7 @@ fun DataScreen(
                             )
                             Text(formatByteSize(file.size), style = MaterialTheme.typography.bodySmall)
                         }
+                        Button(onClick = { onPreviewFile(file.name) }) { Text("View") }
                         Button(onClick = { onInsertFileName("\"${file.name}\"") }) { Text("Insert") }
                         IconButton(onClick = { viewModel.delete(file.name) }) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete ${file.name}")
