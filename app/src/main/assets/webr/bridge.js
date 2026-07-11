@@ -1,6 +1,10 @@
 import { WebR } from './dist/webr.mjs';
 
-const webR = new WebR({ baseUrl: './dist/' });
+// baseUrl MUST be absolute: WebR's web worker resolves it relative to its OWN
+// location (already inside dist/), so a relative './dist/' doubles to dist/dist/
+// and R.bin.js fails to load. Derive the absolute URL from the page.
+const baseUrl = new URL('./dist/', document.baseURI).href;
+const webR = new WebR({ baseUrl });
 let ready = false;
 
 async function boot() {
