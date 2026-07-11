@@ -70,16 +70,25 @@ class WebRController(context: Context) {
         @JavascriptInterface fun onResult(id: Int, json: String) { pending.remove(id)?.complete(json) }
     }
 
-    /** Spike: evaluate R and return the bridge's raw JSON ({text} or {error}). */
-    suspend fun evalRaw(code: String): String {
+    /** Runs a full ExecuteRequest (as JSON) and returns the bridge's ExecuteResponse JSON. */
+    suspend fun execute(requestJson: String): String =
+        callBridge("window.webrRun", org.json.JSONObject.quote(requestJson))
+
+    /** Clears the WebR global env and returns the bridge's reset JSON. */
+    suspend fun reset(): String = callBridge("window.webrReset", null)
+
+    /**
+     * Invokes a bridge function that takes the result id as its first argument and
+     * (optionally) [jsArg] as its second, and awaits the JSON it posts back.
+     */
+    private suspend fun callBridge(fn: String, jsArg: String?): String {
         ready.await()
         val id = nextId.incrementAndGet()
         val deferred = CompletableDeferred<String>()
         pending[id] = deferred
+        val call = if (jsArg != null) "$fn($id, $jsArg)" else "$fn($id)"
         withContext(Dispatchers.Main) {
-            // JSON.stringify keeps arbitrary R source safe inside the JS call.
-            val jsCode = org.json.JSONObject.quote(code)
-            webView.evaluateJavascript("window.webrEval($id, $jsCode)", null)
+            webView.evaluateJavascript(call, null)
         }
         return deferred.await()
     }
