@@ -226,7 +226,7 @@ window.webrUninstall = async (id, pkg) => {
     // (After an app restart the package is instead plain restored files, so the
     // unmount is a harmless no-op and the unlink below clears the files.)
     try { await webR.FS.unmount(`${USER_LIB}/${pkg}`); } catch (e) { /* not a mount */ }
-    const diagR = await webR.evalR(
+    const goneR = await webR.evalR(
       `local({\n` +
       `  p <- ${JSON.stringify(pkg)}; lib <- ${JSON.stringify(USER_LIB)}; dir <- file.path(lib, p);\n` +
       `  if (dir.exists(dir)) {\n` +
@@ -234,13 +234,11 @@ window.webrUninstall = async (id, pkg) => {
       `    try(Sys.chmod(c(dir, ff), mode = '0777', use_umask = FALSE), silent = TRUE);\n` +
       `    unlink(dir, recursive = TRUE, force = TRUE)\n` +
       `  }\n` +
-      `  gone <- !(p %in% rownames(installed.packages(lib.loc = lib, noCache = TRUE)));\n` +
-      `  paste0('gone=', gone, ' dir=', dir.exists(dir))\n` +
+      `  !(p %in% rownames(installed.packages(lib.loc = lib, noCache = TRUE)))\n` +
       `})`
     );
-    const diag = String((await diagR.toArray())[0] || '');
-    webR.destroy(diagR);
-    const removed = /gone=TRUE/.test(diag);
+    const removed = (await goneR.toArray())[0] === true;
+    webR.destroy(goneR);
     if (removed) {
       // Best-effort: unload from the live session so a package already loaded
       // (e.g. via pkg::fn) stops working now, not just on relaunch.
@@ -253,7 +251,7 @@ window.webrUninstall = async (id, pkg) => {
       } catch (e) { /* unload is best-effort */ }
       await snapshotLibrary(); // persist the removal across restarts
     }
-    AndroidBridge.onResult(id, JSON.stringify({ removed, error: removed ? null : `${pkg} was not removed. [${diag}]` }));
+    AndroidBridge.onResult(id, JSON.stringify({ removed, error: removed ? null : `${pkg} was not removed.` }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ removed: false, error: String(e) }));
   }
