@@ -80,7 +80,9 @@ async function restoreLibrary() {
     await webR.FS.writeFile(SNAP_TARBALL, all);
     await webR.evalRVoid(
       `dir.create(${JSON.stringify(USER_LIB)}, showWarnings = FALSE, recursive = TRUE); ` +
-      `utils::untar(${JSON.stringify(SNAP_TARBALL)}, exdir = ${JSON.stringify(USER_LIB)}); ` +
+      // tar="internal" is REQUIRED: the default untar shells out to the external
+      // tar via system(), which is unsupported under Emscripten/WebR.
+      `utils::untar(${JSON.stringify(SNAP_TARBALL)}, exdir = ${JSON.stringify(USER_LIB)}, tar = "internal"); ` +
       `.libPaths(c(${JSON.stringify(USER_LIB)}, .libPaths()))`
     );
     const nR = await webR.evalR(`length(list.files(${JSON.stringify(USER_LIB)}))`);
