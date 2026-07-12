@@ -71,10 +71,15 @@ bundled repo is searched first and the network is the fallback.
 - These are `.tgz`, not `.gz`, so the AAPT auto-gunzip issue that affects the VFS
   images (above) does **not** apply — do not introduce bare `.gz` files under
   `repo/`.
-- Installed packages land in an IndexedDB-backed `/rmobile/library` (first on
-  `.libPaths()`), so they persist across app restarts when the WebR build provides
-  IDBFS; otherwise the library is in-process only (installs still work, but reset
-  on relaunch).
+- Installed packages land in an **in-process** user library (`/rmobile/library`,
+  prepended to `.libPaths()` lazily by the package ops — never at boot, so the run
+  path is unaffected). Installs live for the app session and are reinstalled after a
+  restart. Cross-restart persistence was attempted via an IndexedDB `FS.mount` but
+  that destabilised the WebR channel (broke all evaluation), so it was removed — a
+  snapshot/restore mechanism is a planned follow-up.
+- `bridge.js` strips `\r` from `harness.R` on load, and `.gitattributes` pins
+  `webr/*.R` to LF: a CRLF checkout otherwise leaves a stray `\r` after `local({`
+  that WebR's R parser rejects, breaking every run.
 
 ## License
 

@@ -410,19 +410,25 @@ Local installs are **hybrid-sourced** — `webr::install(pkg, repos = c(<bundled
 "https://repo.r-wasm.org"))` searches a bundled mini-repo (`assets/webr/repo/`,
 vendored by `scripts/fetch-webr-packages.mjs`: tidyverse + easystats core + full
 dependency closure, installable **offline**) before falling back to the network for
-anything else. Installed packages land in an IndexedDB-backed `/rmobile/library`
-(first on `.libPaths()`), so they **persist across app restarts** where WebR
-provides IDBFS (best-effort: if IDBFS is absent the library is in-process only and
-the engine still boots). **v1 boundaries (deliberate, not built yet)** — the Local
-engine has **no data-import** (uploaded files aren't visible to local runs) and
-**no *workspace* (variables) persistence across app restarts** (the live WebR
-instance is the session, so the workspace survives runs within a process but resets
-on relaunch — note the *package library* now does persist); **engine choice is
-app-wide, not per-project**. The Data screen carries a note that it applies to the
-Remote engine; the Packages screen adapts its caption to the active engine and
-hides the legacy-import action on Local. These are documented fast-follows.
+anything else. The local **PACKAGES index must carry each package's full upstream
+control block** (Depends/Imports/LinkingTo/MD5sum), or WebR installs a top-level
+package without its deps and it fails to load. Packages install into an **in-process**
+user library (`/rmobile/library`, created lazily and prepended to `.libPaths()`
+inside the package ops **only** — never at boot, so the run path is untouched).
+`bridge.js` also **strips CR from harness.R** on load: a CRLF (Windows autocrlf)
+checkout otherwise leaves a stray `\r` after `local({` that WebR's R parser rejects
+(`.gitattributes` also pins `webr/*.R` to LF). **v1 boundaries (deliberate, not
+built yet)** — the local package library and workspace are **in-process only** (both
+reset on app restart; installs live for the app session), there's **no data-import**
+(uploaded files aren't visible to local runs), and **engine choice is app-wide, not
+per-project**. Cross-restart persistence was attempted via an IndexedDB `FS.mount`
+but that **destabilised the WebR channel** (broke all evaluation), so it was removed;
+a safer snapshot/restore mechanism is the follow-up. The Data screen carries a note
+that it applies to the Remote engine; the Packages screen adapts its caption to the
+active engine and hides the legacy-import action on Local. These are documented
+fast-follows.
 
-Still **not** built — don't assume these exist: local-engine data-import,
-cross-restart local *workspace* (variables) persistence, per-project engine choice,
-and (backend) network-egress restriction in the dev profile or per-request VM
-isolation.
+Still **not** built — don't assume these exist: cross-restart persistence of the
+local package library or *workspace* (variables), local-engine data-import,
+per-project engine choice, and (backend) network-egress restriction in the dev
+profile or per-request VM isolation.

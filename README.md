@@ -119,10 +119,11 @@ bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
   Settings for full CRAN package support. Both produce the same output
   (stdout/stderr, plots, tables, workspace). The Local engine can now **install
   packages** too — core tidyverse/easystats packages install fully offline from a
-  bundled repo, and anything else downloads on demand; the on-device library
-  persists across app restarts. *v1 limits:* the Local engine can't see uploaded
-  data files and its workspace (variables) resets when the app restarts — data
-  import applies to the Remote engine.
+  bundled repo, and anything else downloads on demand. *v1 limits:* the on-device
+  package library is in-process (installs live for the app session and are
+  reinstalled after a restart — cross-restart persistence is a follow-up), the
+  Local engine can't see uploaded data files, and its workspace (variables) resets
+  when the app restarts — data import applies to the Remote engine.
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
 - **R syntax highlighting** and a **quick-insert bar** for common operators
   (`<-`, `|>`, `%>%`, `()`, …).
@@ -159,8 +160,9 @@ bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
-Not built yet: local-engine data import, cross-restart local *workspace*
-(variables) persistence, per-project engine choice, iOS-app feature parity.
+Not built yet: cross-restart persistence of the local package library and
+*workspace* (variables), local-engine data import, per-project engine choice,
+iOS-app feature parity.
 
 ## Development
 
