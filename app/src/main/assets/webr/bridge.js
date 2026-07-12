@@ -10,13 +10,26 @@ let userLibReady = false;
 const LOCAL_REPO_URL = new URL('./repo', document.baseURI).href;
 const USER_LIB = '/rmobile/library';
 
+const SNAP_TARBALL = '/rmobile/lib.tar.gz';
+const SNAP_CHUNK = 512 * 1024; // base64 transfer chunk size (bytes of raw data)
+
+function bytesToB64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 // Lazily create a user package library and put it first on .libPaths(), so
 // installs land there and library() finds them. Called on demand by the package
-// ops only — NEVER at boot — so the run path stays byte-identical to the
-// verified baseline. This is an in-process (MEMFS) library: installs work within
-// the app session but do not yet persist across restarts. (An earlier attempt to
-// back this with an IndexedDB FS.mount destabilised the WebR channel and broke
-// all evaluation, so persistence is deferred to a safer snapshot mechanism.)
+// ops (and by restore at boot) — never in the plain run path.
 async function ensureUserLib() {
   if (userLibReady) return;
   await webR.evalRVoid(
@@ -26,9 +39,55 @@ async function ensureUserLib() {
   userLibReady = true;
 }
 
+// Cross-restart persistence WITHOUT WebR's IDBFS FS.mount (which broke the eval
+// channel): tar the user library, hand the gzip bytes to Kotlin in base64 chunks
+// to store under filesDir, and untar them back at boot. All best-effort — a
+// failure never blocks install or boot.
+async function snapshotLibrary() {
+  try {
+    await webR.evalRVoid(
+      `local({ owd <- getwd(); on.exit(setwd(owd)); setwd(${JSON.stringify(USER_LIB)}); ` +
+      `utils::tar(${JSON.stringify(SNAP_TARBALL)}, ".", compression = "gzip") })`
+    );
+    const bytes = await webR.FS.readFile(SNAP_TARBALL);
+    AndroidBridge.snapshotBegin();
+    for (let i = 0; i < bytes.length; i += SNAP_CHUNK) {
+      AndroidBridge.snapshotAppend(bytesToB64(bytes.subarray(i, i + SNAP_CHUNK)));
+    }
+    AndroidBridge.snapshotCommit();
+  } catch (e) { /* best-effort persistence */ }
+}
+
+async function restoreLibrary() {
+  try {
+    const size = AndroidBridge.snapshotSize();
+    if (!size) return;
+    const parts = [];
+    let total = 0;
+    for (let off = 0; off < size; off += SNAP_CHUNK) {
+      const b64 = AndroidBridge.snapshotRead(off, SNAP_CHUNK);
+      if (!b64) break;
+      const part = b64ToBytes(b64);
+      parts.push(part);
+      total += part.length;
+    }
+    const all = new Uint8Array(total);
+    let o = 0;
+    for (const p of parts) { all.set(p, o); o += p.length; }
+    await webR.FS.writeFile(SNAP_TARBALL, all);
+    await webR.evalRVoid(
+      `dir.create(${JSON.stringify(USER_LIB)}, showWarnings = FALSE, recursive = TRUE); ` +
+      `utils::untar(${JSON.stringify(SNAP_TARBALL)}, exdir = ${JSON.stringify(USER_LIB)}); ` +
+      `.libPaths(c(${JSON.stringify(USER_LIB)}, .libPaths()))`
+    );
+    userLibReady = true;
+  } catch (e) { /* best-effort restore */ }
+}
+
 async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
+  await restoreLibrary(); // plain R evals (untar + .libPaths) — no FS.mount
   ready = true;
   AndroidBridge.onReady();
 }
@@ -137,6 +196,7 @@ window.webrInstall = async (id, pkg) => {
     const okR = await webR.evalR(`requireNamespace(${JSON.stringify(pkg)}, quietly = TRUE)`);
     const installed = (await okR.toArray())[0] === true;
     webR.destroy(okR);
+    if (installed) await snapshotLibrary(); // persist across restarts
     // On failure, surface the real R stderr (last few lines) instead of a guess —
     // it names the actual cause (e.g. a missing dependency or an unreachable repo).
     const detail = (stderr || stdout || '').split('\n').filter((l) => l.trim()).slice(-6).join('\n');
@@ -157,6 +217,7 @@ window.webrUninstall = async (id, pkg) => {
     const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages(lib.loc = ${JSON.stringify(USER_LIB)}))`);
     const still = (await stillR.toArray())[0] === true;
     webR.destroy(stillR);
+    if (!still) await snapshotLibrary(); // persist the removal across restarts
     AndroidBridge.onResult(id, JSON.stringify({ removed: !still, error: still ? `${pkg} was not removed.` : null }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ removed: false, error: String(e) }));
