@@ -196,7 +196,10 @@ window.webrInstall = async (id, pkg) => {
   const shelter = await new webR.Shelter();
   try {
     const cap = await shelter.captureR(
-      `webr::install(${JSON.stringify(pkg)}, repos = c(${JSON.stringify(LOCAL_REPO_URL)}, "https://repo.r-wasm.org"))`,
+      // mount = FALSE installs real extracted files (not a mounted FS image), so
+      // packages can be tar'd for persistence and unlink'd on uninstall. A mounted
+      // image can't be removed by unlink (the mountpoint survives).
+      `webr::install(${JSON.stringify(pkg)}, repos = c(${JSON.stringify(LOCAL_REPO_URL)}, "https://repo.r-wasm.org"), mount = FALSE)`,
       { withAutoprint: false, captureStreams: true }
     );
     const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
