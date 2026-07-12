@@ -231,6 +231,10 @@ window.webrUninstall = async (id, pkg) => {
       `  dir <- file.path(lib, p);\n` +
       `  found <- tryCatch(paste(find.package(p, quiet = TRUE), collapse = ','), error = function(e) '');\n` +
       `  before <- dir.exists(dir);\n` +
+      // Restored packages carry the installed files' read-only modes, so unlink
+      // can't delete them until the whole tree (dirs + files) is made writable.
+      `  ff <- tryCatch(list.files(dir, recursive = TRUE, all.files = TRUE, full.names = TRUE, include.dirs = TRUE), error = function(e) character(0));\n` +
+      `  try(Sys.chmod(c(dir, ff), mode = '0777', use_umask = FALSE), silent = TRUE);\n` +
       `  unlink(dir, recursive = TRUE, force = TRUE);\n` +
       `  after <- dir.exists(dir);\n` +
       `  paste0('before=', before, ' found=[', found, '] after=', after)\n` +
