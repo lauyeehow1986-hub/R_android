@@ -221,19 +221,26 @@ window.webrInstall = async (id, pkg) => {
 window.webrUninstall = async (id, pkg) => {
   try {
     await ensureUserLib();
-    // Unload the package first: remove.packages only deletes files, so a package
-    // already loaded in this session (e.g. via pkg::fn) would keep working until
-    // relaunch. Detach/unload it so uninstall takes effect immediately.
-    await webR.evalRVoid(
-      `local({ p <- ${JSON.stringify(pkg)}; ` +
-      `try({ if (paste0("package:", p) %in% search()) detach(paste0("package:", p), character.only = TRUE, unload = TRUE) }, silent = TRUE); ` +
-      `try({ if (p %in% loadedNamespaces()) unloadNamespace(p) }, silent = TRUE) })`
-    );
+    // Delete the package files first — this is the actual uninstall and must not
+    // be perturbed (unloading the namespace beforehand makes remove.packages
+    // fail). Verify against the filesystem directly to avoid installed.packages()
+    // caching.
     await webR.evalRVoid(`remove.packages(${JSON.stringify(pkg)}, lib = ${JSON.stringify(USER_LIB)})`);
-    const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages(lib.loc = ${JSON.stringify(USER_LIB)}))`);
+    const stillR = await webR.evalR(`dir.exists(file.path(${JSON.stringify(USER_LIB)}, ${JSON.stringify(pkg)}))`);
     const still = (await stillR.toArray())[0] === true;
     webR.destroy(stillR);
-    if (!still) await snapshotLibrary(); // persist the removal across restarts
+    if (!still) {
+      // Best-effort, AFTER removal: unload from the live session so a package
+      // already loaded (e.g. via pkg::fn) stops working now, not just on relaunch.
+      try {
+        await webR.evalRVoid(
+          `local({ p <- ${JSON.stringify(pkg)}; ` +
+          `try({ if (paste0("package:", p) %in% search()) detach(paste0("package:", p), character.only = TRUE, unload = TRUE) }, silent = TRUE); ` +
+          `try({ if (p %in% loadedNamespaces()) unloadNamespace(p) }, silent = TRUE) })`
+        );
+      } catch (e) { /* unload is best-effort */ }
+      await snapshotLibrary(); // persist the removal across restarts
+    }
     AndroidBridge.onResult(id, JSON.stringify({ removed: !still, error: still ? `${pkg} was not removed.` : null }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ removed: false, error: String(e) }));
