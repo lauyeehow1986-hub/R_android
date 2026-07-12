@@ -412,23 +412,27 @@ vendored by `scripts/fetch-webr-packages.mjs`: tidyverse + easystats core + full
 dependency closure, installable **offline**) before falling back to the network for
 anything else. The local **PACKAGES index must carry each package's full upstream
 control block** (Depends/Imports/LinkingTo/MD5sum), or WebR installs a top-level
-package without its deps and it fails to load. Packages install into an **in-process**
-user library (`/rmobile/library`, created lazily and prepended to `.libPaths()`
-inside the package ops **only** — never at boot, so the run path is untouched).
-`bridge.js` also **strips CR from harness.R** on load: a CRLF (Windows autocrlf)
-checkout otherwise leaves a stray `\r` after `local({` that WebR's R parser rejects
-(`.gitattributes` also pins `webr/*.R` to LF). **v1 boundaries (deliberate, not
-built yet)** — the local package library and workspace are **in-process only** (both
-reset on app restart; installs live for the app session), there's **no data-import**
-(uploaded files aren't visible to local runs), and **engine choice is app-wide, not
-per-project**. Cross-restart persistence was attempted via an IndexedDB `FS.mount`
-but that **destabilised the WebR channel** (broke all evaluation), so it was removed;
-a safer snapshot/restore mechanism is the follow-up. The Data screen carries a note
-that it applies to the Remote engine; the Packages screen adapts its caption to the
-active engine and hides the legacy-import action on Local. These are documented
-fast-follows.
+package without its deps and it fails to load. Packages install into a user library
+(`/rmobile/library`, created lazily and prepended to `.libPaths()` inside the package
+ops **only** — never at boot, so the run path is untouched); uninstall
+**unloads the namespace** (detach + `unloadNamespace`) before `remove.packages` so it
+takes effect in the live session. The library **persists across app restarts** via a
+**snapshot/restore** mechanism (NOT IDBFS `FS.mount`, which destabilised the eval
+channel): after each install/uninstall the library is `utils::tar`'d and streamed to
+Kotlin in base64 chunks (`WebRController` stores it under `filesDir`), and at boot
+it's written back and `utils::untar(..., tar = "internal")`'d before ready
+(`tar="internal"` is required — the default untar shells out via `system()`, which
+Emscripten forbids). `bridge.js` also **strips CR from harness.R** on load: a CRLF
+(Windows autocrlf) checkout otherwise leaves a stray `\r` after `local({` that WebR's
+R parser rejects (`.gitattributes` also pins `webr/*.R` to LF). **v1 boundaries
+(deliberate, not built yet)** — the local **workspace** (variables) is still
+in-process (resets on app restart), there's **no data-import** (uploaded files aren't
+visible to local runs), and **engine choice is app-wide, not per-project**. The Data
+screen carries a note that it applies to the Remote engine; the Packages screen adapts
+its caption to the active engine and hides the legacy-import action on Local. These
+are documented fast-follows.
 
 Still **not** built — don't assume these exist: cross-restart persistence of the
-local package library or *workspace* (variables), local-engine data-import,
-per-project engine choice, and (backend) network-egress restriction in the dev
-profile or per-request VM isolation.
+local *workspace* (variables), local-engine data-import, per-project engine choice,
+and (backend) network-egress restriction in the dev profile or per-request VM
+isolation.

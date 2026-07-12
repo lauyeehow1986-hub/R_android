@@ -205,15 +205,11 @@ window.webrInstall = async (id, pkg) => {
     const installed = (await okR.toArray())[0] === true;
     webR.destroy(okR);
     if (installed) await snapshotLibrary(); // persist across restarts
-    // Persistence diagnostics (visible in the install log): what boot-restore did
-    // this launch, and what the snapshot just wrote.
-    const persistNote = `[persist] restore: ${lastRestoreInfo || 'n/a'} | snapshot: ${lastSnapshotInfo || 'n/a'}`;
-    const stdoutWithNote = installed ? `${stdout}\n${persistNote}`.trim() : stdout;
     // On failure, surface the real R stderr (last few lines) instead of a guess —
     // it names the actual cause (e.g. a missing dependency or an unreachable repo).
     const detail = (stderr || stdout || '').split('\n').filter((l) => l.trim()).slice(-6).join('\n');
     AndroidBridge.onResult(id, JSON.stringify({
-      installed, stdout: stdoutWithNote, stderr,
+      installed, stdout, stderr,
       error: installed ? null : (`Could not install ${pkg}.` + (detail ? `\n${detail}` : ' No details were captured.')),
       timedOut: false, systemRequirements: null,
     }));
@@ -225,6 +221,14 @@ window.webrInstall = async (id, pkg) => {
 window.webrUninstall = async (id, pkg) => {
   try {
     await ensureUserLib();
+    // Unload the package first: remove.packages only deletes files, so a package
+    // already loaded in this session (e.g. via pkg::fn) would keep working until
+    // relaunch. Detach/unload it so uninstall takes effect immediately.
+    await webR.evalRVoid(
+      `local({ p <- ${JSON.stringify(pkg)}; ` +
+      `try({ if (paste0("package:", p) %in% search()) detach(paste0("package:", p), character.only = TRUE, unload = TRUE) }, silent = TRUE); ` +
+      `try({ if (p %in% loadedNamespaces()) unloadNamespace(p) }, silent = TRUE) })`
+    );
     await webR.evalRVoid(`remove.packages(${JSON.stringify(pkg)}, lib = ${JSON.stringify(USER_LIB)})`);
     const stillR = await webR.evalR(`${JSON.stringify(pkg)} %in% rownames(installed.packages(lib.loc = ${JSON.stringify(USER_LIB)}))`);
     const still = (await stillR.toArray())[0] === true;

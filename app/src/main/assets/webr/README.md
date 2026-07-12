@@ -71,12 +71,14 @@ bundled repo is searched first and the network is the fallback.
 - These are `.tgz`, not `.gz`, so the AAPT auto-gunzip issue that affects the VFS
   images (above) does **not** apply — do not introduce bare `.gz` files under
   `repo/`.
-- Installed packages land in an **in-process** user library (`/rmobile/library`,
-  prepended to `.libPaths()` lazily by the package ops — never at boot, so the run
-  path is unaffected). Installs live for the app session and are reinstalled after a
-  restart. Cross-restart persistence was attempted via an IndexedDB `FS.mount` but
-  that destabilised the WebR channel (broke all evaluation), so it was removed — a
-  snapshot/restore mechanism is a planned follow-up.
+- Installed packages land in a user library (`/rmobile/library`, prepended to
+  `.libPaths()` lazily by the package ops — never at boot, so the run path is
+  unaffected). The library **persists across app restarts** via snapshot/restore:
+  after each install/uninstall it's `utils::tar`'d and streamed to Kotlin in base64
+  chunks (stored under `filesDir`), then written back and
+  `utils::untar(..., tar = "internal")`'d at boot. `tar="internal"` is required —
+  the default `untar` shells out via `system()`, which Emscripten/WebR forbids. This
+  deliberately avoids WebR's IDBFS `FS.mount`, which destabilised the eval channel.
 - `bridge.js` strips `\r` from `harness.R` on load, and `.gitattributes` pins
   `webr/*.R` to LF: a CRLF checkout otherwise leaves a stray `\r` after `local({`
   that WebR's R parser rejects, breaking every run.
