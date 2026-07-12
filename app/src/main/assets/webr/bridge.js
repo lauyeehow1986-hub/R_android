@@ -221,16 +221,14 @@ window.webrInstall = async (id, pkg) => {
 window.webrUninstall = async (id, pkg) => {
   try {
     await ensureUserLib();
-    // Uninstall handles both forms a package can take in the user library:
-    //  - a freshly installed package is a MOUNTED FS image — remove.packages
-    //    unmounts it (leaving an empty dir), so removal is judged by the package
-    //    DB (installed.packages), not the directory;
-    //  - a package restored from a snapshot is real (often read-only) files —
-    //    chmod + unlink clears whatever remove.packages left behind.
+    // A freshly installed package is a MOUNTED FS image, which neither
+    // remove.packages nor unlink can delete — it must be FS.unmount'd first.
+    // (After an app restart the package is instead plain restored files, so the
+    // unmount is a harmless no-op and the unlink below clears the files.)
+    try { await webR.FS.unmount(`${USER_LIB}/${pkg}`); } catch (e) { /* not a mount */ }
     const diagR = await webR.evalR(
       `local({\n` +
       `  p <- ${JSON.stringify(pkg)}; lib <- ${JSON.stringify(USER_LIB)}; dir <- file.path(lib, p);\n` +
-      `  suppressWarnings(try(remove.packages(p, lib = lib), silent = TRUE));\n` +
       `  if (dir.exists(dir)) {\n` +
       `    ff <- tryCatch(list.files(dir, recursive = TRUE, all.files = TRUE, full.names = TRUE, include.dirs = TRUE), error = function(e) character(0));\n` +
       `    try(Sys.chmod(c(dir, ff), mode = '0777', use_umask = FALSE), silent = TRUE);\n` +
