@@ -10,8 +10,10 @@ let userLibReady = false;
 const LOCAL_REPO_URL = new URL('./repo', document.baseURI).href;
 const USER_LIB = '/rmobile/library';
 
-const SNAP_TARBALL = '/rmobile/lib.tar.gz';
+const SNAP_TARBALL = '/rmobile/lib.tar';
 const SNAP_CHUNK = 512 * 1024; // base64 transfer chunk size (bytes of raw data)
+let lastSnapshotInfo = '';
+let lastRestoreInfo = '';
 
 function bytesToB64(bytes) {
   let s = '';
@@ -47,7 +49,7 @@ async function snapshotLibrary() {
   try {
     await webR.evalRVoid(
       `local({ owd <- getwd(); on.exit(setwd(owd)); setwd(${JSON.stringify(USER_LIB)}); ` +
-      `utils::tar(${JSON.stringify(SNAP_TARBALL)}, ".", compression = "gzip") })`
+      `utils::tar(${JSON.stringify(SNAP_TARBALL)}, ".", compression = "none") })`
     );
     const bytes = await webR.FS.readFile(SNAP_TARBALL);
     AndroidBridge.snapshotBegin();
@@ -55,13 +57,14 @@ async function snapshotLibrary() {
       AndroidBridge.snapshotAppend(bytesToB64(bytes.subarray(i, i + SNAP_CHUNK)));
     }
     AndroidBridge.snapshotCommit();
-  } catch (e) { /* best-effort persistence */ }
+    lastSnapshotInfo = `tar ${bytes.length}B → stored ${AndroidBridge.snapshotSize()}B`;
+  } catch (e) { lastSnapshotInfo = 'snapshot failed: ' + String(e); }
 }
 
 async function restoreLibrary() {
   try {
     const size = AndroidBridge.snapshotSize();
-    if (!size) return;
+    if (!size) { lastRestoreInfo = 'no snapshot'; return; }
     const parts = [];
     let total = 0;
     for (let off = 0; off < size; off += SNAP_CHUNK) {
@@ -80,8 +83,11 @@ async function restoreLibrary() {
       `utils::untar(${JSON.stringify(SNAP_TARBALL)}, exdir = ${JSON.stringify(USER_LIB)}); ` +
       `.libPaths(c(${JSON.stringify(USER_LIB)}, .libPaths()))`
     );
+    const nR = await webR.evalR(`length(list.files(${JSON.stringify(USER_LIB)}))`);
+    lastRestoreInfo = `restored ${total}B → ${(await nR.toArray())[0]} entries in lib`;
+    webR.destroy(nR);
     userLibReady = true;
-  } catch (e) { /* best-effort restore */ }
+  } catch (e) { lastRestoreInfo = 'restore failed: ' + String(e); }
 }
 
 async function boot() {
@@ -197,11 +203,15 @@ window.webrInstall = async (id, pkg) => {
     const installed = (await okR.toArray())[0] === true;
     webR.destroy(okR);
     if (installed) await snapshotLibrary(); // persist across restarts
+    // Persistence diagnostics (visible in the install log): what boot-restore did
+    // this launch, and what the snapshot just wrote.
+    const persistNote = `[persist] restore: ${lastRestoreInfo || 'n/a'} | snapshot: ${lastSnapshotInfo || 'n/a'}`;
+    const stdoutWithNote = installed ? `${stdout}\n${persistNote}`.trim() : stdout;
     // On failure, surface the real R stderr (last few lines) instead of a guess —
     // it names the actual cause (e.g. a missing dependency or an unreachable repo).
     const detail = (stderr || stdout || '').split('\n').filter((l) => l.trim()).slice(-6).join('\n');
     AndroidBridge.onResult(id, JSON.stringify({
-      installed, stdout, stderr,
+      installed, stdout: stdoutWithNote, stderr,
       error: installed ? null : (`Could not install ${pkg}.` + (detail ? `\n${detail}` : ' No details were captured.')),
       timedOut: false, systemRequirements: null,
     }));
