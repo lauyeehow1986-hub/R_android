@@ -196,10 +196,7 @@ window.webrInstall = async (id, pkg) => {
   const shelter = await new webR.Shelter();
   try {
     const cap = await shelter.captureR(
-      // mount = FALSE installs real extracted files (not a mounted FS image), so
-      // packages can be tar'd for persistence and unlink'd on uninstall. A mounted
-      // image can't be removed by unlink (the mountpoint survives).
-      `webr::install(${JSON.stringify(pkg)}, repos = c(${JSON.stringify(LOCAL_REPO_URL)}, "https://repo.r-wasm.org"), mount = FALSE)`,
+      `webr::install(${JSON.stringify(pkg)}, repos = c(${JSON.stringify(LOCAL_REPO_URL)}, "https://repo.r-wasm.org"))`,
       { withAutoprint: false, captureStreams: true }
     );
     const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
@@ -224,28 +221,28 @@ window.webrInstall = async (id, pkg) => {
 window.webrUninstall = async (id, pkg) => {
   try {
     await ensureUserLib();
-    // Delete the package files directly from the user library. remove.packages
-    // has proven flaky under WebR (it can report success without deleting, or
-    // resolve to the wrong lib), so we unlink the directory ourselves and confirm
-    // against the filesystem. `diag` captures what happened for visibility.
+    // Uninstall handles both forms a package can take in the user library:
+    //  - a freshly installed package is a MOUNTED FS image — remove.packages
+    //    unmounts it (leaving an empty dir), so removal is judged by the package
+    //    DB (installed.packages), not the directory;
+    //  - a package restored from a snapshot is real (often read-only) files —
+    //    chmod + unlink clears whatever remove.packages left behind.
     const diagR = await webR.evalR(
       `local({\n` +
-      `  p <- ${JSON.stringify(pkg)}; lib <- ${JSON.stringify(USER_LIB)};\n` +
-      `  dir <- file.path(lib, p);\n` +
-      `  found <- tryCatch(paste(find.package(p, quiet = TRUE), collapse = ','), error = function(e) '');\n` +
-      `  before <- dir.exists(dir);\n` +
-      // Restored packages carry the installed files' read-only modes, so unlink
-      // can't delete them until the whole tree (dirs + files) is made writable.
-      `  ff <- tryCatch(list.files(dir, recursive = TRUE, all.files = TRUE, full.names = TRUE, include.dirs = TRUE), error = function(e) character(0));\n` +
-      `  try(Sys.chmod(c(dir, ff), mode = '0777', use_umask = FALSE), silent = TRUE);\n` +
-      `  unlink(dir, recursive = TRUE, force = TRUE);\n` +
-      `  after <- dir.exists(dir);\n` +
-      `  paste0('before=', before, ' found=[', found, '] after=', after)\n` +
+      `  p <- ${JSON.stringify(pkg)}; lib <- ${JSON.stringify(USER_LIB)}; dir <- file.path(lib, p);\n` +
+      `  suppressWarnings(try(remove.packages(p, lib = lib), silent = TRUE));\n` +
+      `  if (dir.exists(dir)) {\n` +
+      `    ff <- tryCatch(list.files(dir, recursive = TRUE, all.files = TRUE, full.names = TRUE, include.dirs = TRUE), error = function(e) character(0));\n` +
+      `    try(Sys.chmod(c(dir, ff), mode = '0777', use_umask = FALSE), silent = TRUE);\n` +
+      `    unlink(dir, recursive = TRUE, force = TRUE)\n` +
+      `  }\n` +
+      `  gone <- !(p %in% rownames(installed.packages(lib.loc = lib, noCache = TRUE)));\n` +
+      `  paste0('gone=', gone, ' dir=', dir.exists(dir))\n` +
       `})`
     );
     const diag = String((await diagR.toArray())[0] || '');
     webR.destroy(diagR);
-    const removed = /after=FALSE/.test(diag);
+    const removed = /gone=TRUE/.test(diag);
     if (removed) {
       // Best-effort: unload from the live session so a package already loaded
       // (e.g. via pkg::fn) stops working now, not just on relaunch.
