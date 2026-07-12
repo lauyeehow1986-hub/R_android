@@ -414,9 +414,13 @@ anything else. The local **PACKAGES index must carry each package's full upstrea
 control block** (Depends/Imports/LinkingTo/MD5sum), or WebR installs a top-level
 package without its deps and it fails to load. Packages install into a user library
 (`/rmobile/library`, created lazily and prepended to `.libPaths()` inside the package
-ops **only** — never at boot, so the run path is untouched); uninstall
-**unloads the namespace** (detach + `unloadNamespace`) before `remove.packages` so it
-takes effect in the live session. The library **persists across app restarts** via a
+ops **only** — never at boot, so the run path is untouched). WebR installs each
+package as a **mounted FS image**, so uninstall must `webR.FS.unmount` the package
+path first, then `chmod`+`unlink` any leftover files (an app-restart restores packages
+as plain read-only files instead — the unmount is then a no-op and the unlink clears
+them); removal is confirmed via `installed.packages(noCache = TRUE)` (not the
+directory, which an unmounted mount leaves behind empty), and the namespace is
+unloaded afterward so a loaded package stops working immediately. The library **persists across app restarts** via a
 **snapshot/restore** mechanism (NOT IDBFS `FS.mount`, which destabilised the eval
 channel): after each install/uninstall the library is `utils::tar`'d and streamed to
 Kotlin in base64 chunks (`WebRController` stores it under `filesDir`), and at boot
