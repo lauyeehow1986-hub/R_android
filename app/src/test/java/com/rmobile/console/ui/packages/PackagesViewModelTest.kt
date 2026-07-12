@@ -231,4 +231,27 @@ class PackagesViewModelTest {
         advanceUntilIdle()
         assertTrue(vm.uiState.value.engineIsLocal)
     }
+
+    @Test
+    fun `onShown re-reads the engine and reloads the list`() = runTest {
+        var local = false
+        val api = FakeApi(packagesResponse = PackagesResponse(listOf("glue")))
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(api),
+            projectStore = InMemoryProjectStore(),
+            engineProvider = { com.rmobile.console.data.execution.RemoteExecutionEngine(RExecutionRepository(api)) },
+            engineIsLocalProvider = { local },
+        )
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.engineIsLocal)
+
+        // Engine switched (e.g. in Settings) and a package installed while away.
+        local = true
+        api.packagesResponse = PackagesResponse(listOf("glue", "praise"))
+        vm.onShown()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.engineIsLocal)
+        assertEquals(listOf("glue", "praise"), vm.uiState.value.installed)
+    }
 }

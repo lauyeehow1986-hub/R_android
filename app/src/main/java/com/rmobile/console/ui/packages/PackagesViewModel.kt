@@ -28,14 +28,30 @@ class PackagesViewModel(
     private val _uiState = MutableStateFlow(PackagesUiState())
     val uiState: StateFlow<PackagesUiState> = _uiState.asStateFlow()
 
-    private val session: String
+    private var session: String = RExecutionRepository.DEFAULT_SESSION_ID
 
     init {
+        resolveContext()
+        refresh()
+    }
+
+    /**
+     * Re-reads the active project's session and the current engine. Both can
+     * change while this ViewModel lives (the engine via Settings, the project via
+     * the project library), and this ViewModel outlives navigation, so callers
+     * invoke [onShown] each time the Packages screen appears to avoid stale state.
+     */
+    private fun resolveContext() {
         val projects = projectStore.loadProjects()
         val active = projects.firstOrNull { it.id == projectStore.loadLastOpenProjectId() }
             ?: projects.firstOrNull()
         session = active?.let { ProjectSession.of(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
-        _uiState.value = _uiState.value.copy(projectName = active?.name ?: "", engineIsLocal = engineIsLocalProvider())
+        _uiState.update { it.copy(projectName = active?.name ?: "", engineIsLocal = engineIsLocalProvider()) }
+    }
+
+    /** Call when the Packages screen becomes visible: re-resolve engine/session and reload the list. */
+    fun onShown() {
+        resolveContext()
         refresh()
     }
 
