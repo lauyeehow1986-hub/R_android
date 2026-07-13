@@ -361,8 +361,16 @@ window.webrPreview = async (id, requestJson) => {
       `writeLines(js, "/tmp/rmobile_preview.json") })`
     );
     const bytes = await webR.FS.readFile('/tmp/rmobile_preview.json');
-    const table = JSON.parse(new TextDecoder().decode(bytes));
+    const rawText = new TextDecoder().decode(bytes);
+    const table = JSON.parse(rawText);
     await webR.evalRVoid('unlink("/tmp/rmobile_preview.json"); rm(.pv)');
+    // TEMP DIAGNOSTIC: if columns came through but rows are empty, surface the raw
+    // emitted JSON on-screen so we can tell whether the row loss is R-side (rows
+    // truly absent here) or app-side. Remove once the preview bug is resolved.
+    if ((table.columns || []).length > 0 && (table.rows || []).length === 0) {
+      AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'DIAG rows empty — raw R JSON:\n' + rawText, truncated: false }));
+      return;
+    }
     AndroidBridge.onResult(id, JSON.stringify({ table, error: null, truncated: table.totalRows > 200 }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));

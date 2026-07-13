@@ -5,6 +5,7 @@ import android.content.Context
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
@@ -45,6 +46,11 @@ class WebRController(context: Context) {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
+            // All assets are bundled and served locally by WebViewAssetLoader, so
+            // there's nothing to gain from HTTP caching — and LOAD_DEFAULT lets the
+            // WebView serve a stale bridge.js/harness.R from its on-disk cache across
+            // update installs (which keep app data), silently masking asset changes.
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
             addJavascriptInterface(Bridge(), "AndroidBridge")
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
