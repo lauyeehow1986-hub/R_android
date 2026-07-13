@@ -38,7 +38,7 @@ fun PreviewScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (state.title.isBlank()) name else state.title) },
+                title = { Text((if (state.title.isBlank()) name else state.title) + " [k=${state.table?.rows?.size}]") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
