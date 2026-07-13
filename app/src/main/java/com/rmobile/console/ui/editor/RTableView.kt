@@ -1,6 +1,5 @@
 package com.rmobile.console.ui.editor
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -57,11 +56,14 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
         RTableViewOps.display(table.rows, table.columnTypes, filter, sortColumn, ascending)
     }
 
+    // Total width of one row, so the dividers can be given a bounded width. A bare
+    // HorizontalDivider() uses fillMaxWidth(), which resolves to an *infinite* width
+    // inside the horizontalScroll container below and breaks the column's layout so
+    // no rows after the first divider get placed. Each cell is width(w).padding(6.dp),
+    // i.e. w + 12.dp wide.
+    val rowWidth = widths.fold(0.dp) { acc, w -> acc + w + 12.dp }
+
     Column(modifier = modifier.fillMaxWidth()) {
-        Text("DBG disp=${displayed.size} row0=[${displayed.firstOrNull()?.joinToString("|")}] len=${displayed.firstOrNull()?.size}")
-        displayed.forEach { r ->
-            Text("SIMPLE> " + r.joinToString("  "), color = androidx.compose.ui.graphics.Color.Red, fontFamily = FontFamily.Monospace)
-        }
         OutlinedTextField(
             value = filter,
             onValueChange = { filter = it },
@@ -106,14 +108,13 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            HorizontalDivider()
+            HorizontalDivider(Modifier.width(rowWidth))
             displayed.forEach { row ->
-                Row(Modifier.background(androidx.compose.ui.graphics.Color(0x33FF0000))) {
+                Row {
                     row.forEachIndexed { c, cell ->
                         val numeric = table.columnTypes.getOrElse(c) { "" } in RTableViewOps.NUMERIC_TYPES
                         Text(
                             text = cell,
-                            color = androidx.compose.ui.graphics.Color.Red,
                             fontFamily = FontFamily.Monospace,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -125,7 +126,7 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
                         )
                     }
                 }
-                HorizontalDivider()
+                HorizontalDivider(Modifier.width(rowWidth))
             }
         }
         if (table.totalRows > table.rows.size) {
