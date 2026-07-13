@@ -363,6 +363,9 @@ window.webrPreview = async (id, requestJson) => {
     const bytes = await webR.FS.readFile('/tmp/rmobile_preview.json');
     const table = JSON.parse(new TextDecoder().decode(bytes));
     await webR.evalRVoid('unlink("/tmp/rmobile_preview.json"); rm(.pv)');
+    // TEMP BUILD MARKER E2: tag the first column header so we can confirm on-device
+    // whether THIS bridge build is the one executing. Remove once preview renders.
+    if (table.columns && table.columns.length) table.columns[0] = 'E2_' + table.columns[0];
     AndroidBridge.onResult(id, JSON.stringify({ table, error: null, truncated: table.totalRows > 200 }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));
