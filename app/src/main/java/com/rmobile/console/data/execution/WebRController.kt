@@ -127,6 +127,9 @@ class WebRController(context: Context) {
     /** Lists installed packages and returns the bridge's PackagesResponse JSON. */
     suspend fun listPackages(): String = callBridge("window.webrListPackages", null)
 
+    /** Runs a read-only preview of a data file/workspace object and returns the bridge's PreviewResponse JSON. */
+    suspend fun preview(requestJson: String): String = callBridge("window.webrPreview", org.json.JSONObject.quote(requestJson))
+
     /**
      * Invokes a bridge function that takes the result id as its first argument and
      * (optionally) [jsArg] as its second, and awaits the JSON it posts back.

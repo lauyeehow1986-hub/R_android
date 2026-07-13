@@ -126,6 +126,7 @@ class EditorViewModelTest {
         override suspend fun listPackages(sessionId: String) = Result.success(com.rmobile.console.data.model.PackagesResponse())
         override suspend fun install(request: com.rmobile.console.data.model.InstallRequest) = Result.success(com.rmobile.console.data.model.InstallResponse())
         override suspend fun uninstall(request: com.rmobile.console.data.model.UninstallRequest) = Result.success(com.rmobile.console.data.model.UninstallResponse())
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) = Result.success(com.rmobile.console.data.model.PreviewResponse())
     }
 
     @Test

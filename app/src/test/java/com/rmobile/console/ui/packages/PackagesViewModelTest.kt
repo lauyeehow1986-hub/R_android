@@ -97,6 +97,7 @@ class PackagesViewModelTest {
             return Result.success(InstallResponse(installed = true))
         }
         override suspend fun uninstall(request: UninstallRequest) = Result.success(UninstallResponse(removed = true))
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) = Result.success(com.rmobile.console.data.model.PreviewResponse())
     }
 
     @Test

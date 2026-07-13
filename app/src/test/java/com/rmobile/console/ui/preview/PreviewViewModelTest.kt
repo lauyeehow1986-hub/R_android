@@ -81,7 +81,10 @@ class PreviewViewModelTest {
     private fun vm(
         api: FakePreviewApi,
         store: ProjectStore = InMemoryProjectStore(),
-    ) = PreviewViewModel(RExecutionRepository(api, NoopDataApi()), store)
+    ) = PreviewViewModel(
+        engineProvider = { com.rmobile.console.data.execution.RemoteExecutionEngine(RExecutionRepository(api, NoopDataApi())) },
+        projectStore = store,
+    )
 
     @Test
     fun `load populates the table and title`() = runTest {

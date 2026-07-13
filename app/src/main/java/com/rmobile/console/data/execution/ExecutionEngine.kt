@@ -6,6 +6,8 @@ import com.rmobile.console.data.model.ExecuteResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
+import com.rmobile.console.data.model.PreviewRequest
+import com.rmobile.console.data.model.PreviewResponse
 import com.rmobile.console.data.model.UninstallRequest
 import com.rmobile.console.data.model.UninstallResponse
 
@@ -21,6 +23,8 @@ interface ExecutionEngine {
     suspend fun listPackages(sessionId: String): Result<PackagesResponse>
     suspend fun install(request: InstallRequest): Result<InstallResponse>
     suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse>
+    /** Read-only preview of a data file or workspace object as a table. */
+    suspend fun preview(request: PreviewRequest): Result<PreviewResponse>
 }
 
 /** The network backend engine — delegates to the existing repository. */
@@ -48,4 +52,7 @@ class RemoteExecutionEngine(
 
     override suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse> =
         repository.uninstall(request.packageName, request.sessionId ?: RExecutionRepository.DEFAULT_SESSION_ID)
+
+    override suspend fun preview(request: PreviewRequest): Result<PreviewResponse> =
+        repository.preview(request.source, request.name, request.sessionId ?: RExecutionRepository.DEFAULT_SESSION_ID)
 }
