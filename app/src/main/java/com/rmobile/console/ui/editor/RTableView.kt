@@ -57,7 +57,7 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        Text("DBG disp=${displayed.size} rows=${table.rows.size} cols=${table.columns.size}")
+        Text("DBG disp=${displayed.size} row0=[${displayed.firstOrNull()?.joinToString("|")}] len=${displayed.firstOrNull()?.size}")
         OutlinedTextField(
             value = filter,
             onValueChange = { filter = it },
