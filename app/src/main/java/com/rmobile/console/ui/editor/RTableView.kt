@@ -1,5 +1,6 @@
 package com.rmobile.console.ui.editor
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -104,11 +105,12 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
             }
             HorizontalDivider()
             displayed.forEach { row ->
-                Row {
+                Row(Modifier.background(androidx.compose.ui.graphics.Color(0x33FF0000))) {
                     row.forEachIndexed { c, cell ->
                         val numeric = table.columnTypes.getOrElse(c) { "" } in RTableViewOps.NUMERIC_TYPES
                         Text(
                             text = cell,
+                            color = androidx.compose.ui.graphics.Color.Red,
                             fontFamily = FontFamily.Monospace,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
