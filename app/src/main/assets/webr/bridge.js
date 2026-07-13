@@ -361,13 +361,9 @@ window.webrPreview = async (id, requestJson) => {
       `writeLines(js, "/tmp/rmobile_preview.json") })`
     );
     const bytes = await webR.FS.readFile('/tmp/rmobile_preview.json');
-    const rawText = new TextDecoder().decode(bytes);
-    const table = JSON.parse(rawText);
+    const table = JSON.parse(new TextDecoder().decode(bytes));
     await webR.evalRVoid('unlink("/tmp/rmobile_preview.json"); rm(.pv)');
-    // TEMP DIAGNOSTIC (build D3): always surface the raw emitted JSON on-screen so
-    // we can confirm THIS build is running and see exactly what rows R produced.
-    // Remove once the preview bug is resolved.
-    AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'DIAG D3 rows=' + (table.rows || []).length + ' raw:\n' + rawText, truncated: false }));
+    AndroidBridge.onResult(id, JSON.stringify({ table, error: null, truncated: table.totalRows > 200 }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));
   } finally { shelter.purge(); }
