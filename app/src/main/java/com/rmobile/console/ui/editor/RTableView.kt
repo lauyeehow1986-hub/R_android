@@ -59,6 +59,9 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text("DBG disp=${displayed.size} row0=[${displayed.firstOrNull()?.joinToString("|")}] len=${displayed.firstOrNull()?.size}")
+        displayed.forEach { r ->
+            Text("SIMPLE> " + r.joinToString("  "), color = androidx.compose.ui.graphics.Color.Red, fontFamily = FontFamily.Monospace)
+        }
         OutlinedTextField(
             value = filter,
             onValueChange = { filter = it },
