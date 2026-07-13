@@ -346,16 +346,23 @@ window.webrPreview = async (id, requestJson) => {
       AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(msg), truncated: false }));
       return;
     }
-    const tableJson = await webR.evalR(
+    // Emit the RTable JSON by writing it to a file and reading the bytes back —
+    // the same proven path as readTables() for /execute. jsonlite::toJSON returns
+    // a class-"json" character; extracting it via RObject.toArray() proved
+    // unreliable on-device (columns survived but rows came back empty), whereas
+    // FS.readFile + TextDecoder + JSON.parse round-trips the full string intact.
+    await webR.evalRVoid(
       `local({ df <- as.data.frame(.pv); n <- nrow(df); sub <- utils::head(df, 200); ` +
       `cols <- names(sub); types <- vapply(sub, function(c) class(c)[1], character(1)); ` +
       `cells <- lapply(sub, function(c) as.character(format(c, trim = TRUE))); ` +
       `rows <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(c) c[i], character(1)))); ` +
-      `jsonlite::toJSON(list(columns = as.character(cols), columnTypes = as.character(types), rows = rows, ` +
-      `totalRows = jsonlite::unbox(as.integer(n))), auto_unbox = FALSE) })`
+      `js <- jsonlite::toJSON(list(columns = as.character(cols), columnTypes = as.character(types), rows = rows, ` +
+      `totalRows = jsonlite::unbox(as.integer(n))), auto_unbox = FALSE); ` +
+      `writeLines(js, "/tmp/rmobile_preview.json") })`
     );
-    const table = JSON.parse((await tableJson.toArray())[0]); webR.destroy(tableJson);
-    await webR.evalRVoid('rm(.pv)');
+    const bytes = await webR.FS.readFile('/tmp/rmobile_preview.json');
+    const table = JSON.parse(new TextDecoder().decode(bytes));
+    await webR.evalRVoid('unlink("/tmp/rmobile_preview.json"); rm(.pv)');
     AndroidBridge.onResult(id, JSON.stringify({ table, error: null, truncated: table.totalRows > 200 }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));
