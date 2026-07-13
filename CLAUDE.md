@@ -428,15 +428,23 @@ it's written back and `utils::untar(..., tar = "internal")`'d before ready
 (`tar="internal"` is required — the default untar shells out via `system()`, which
 Emscripten forbids). `bridge.js` also **strips CR from harness.R** on load: a CRLF
 (Windows autocrlf) checkout otherwise leaves a stray `\r` after `local({` that WebR's
-R parser rejects (`.gitattributes` also pins `webr/*.R` to LF). **v1 boundaries
-(deliberate, not built yet)** — the local **workspace** (variables) is still
-in-process (resets on app restart), there's **no data-import** (uploaded files aren't
-visible to local runs), and **engine choice is app-wide, not per-project**. The Data
-screen carries a note that it applies to the Remote engine; the Packages screen adapts
-its caption to the active engine and hides the legacy-import action on Local. These
-are documented fast-follows.
+R parser rejects (`.gitattributes` also pins `webr/*.R` to LF). The Local engine also
+supports **data import** — data ops route through a `SessionDataStore` abstraction
+(`data/datafiles/`: Remote delegates to the backend `/upload`/`/data`/`/delete-data`;
+Local = `LocalSessionDataStore`, on-device storage under `filesDir/localdata/<session>/`),
+chosen by `ServiceLocator.currentSessionDataStore()`. On-device files are made readable
+by bare name via a **lazy VFS sync**: `bridge.js` `syncData()` mirrors a session's files
+into `/rmobile/data/<session>` (chunked base64 via `WebRController` `dataList`/`dataChunk`,
+pulling only new/changed), and `linkData()` symlinks them into each run's cwd (`copy`
+fallback if WASM symlinks misbehave) — synced after `resetRunDir`, linked after the run's
+own files so those shadow same-named data files. **Preview** is engine-routed too (added to
+`ExecutionEngine`; Local = `bridge.js` `webrPreview`, which reads a file/object and emits an
+`RTable`). **v1 boundaries (deliberate, not built yet)** — the local **workspace**
+(variables) is still in-process (resets on app restart), and **engine choice is app-wide,
+not per-project**. The Data/Packages screens adapt their caption to the active engine
+(the Data screen also warns above 200 MB on Local, since its FS is in-memory). These are
+documented fast-follows.
 
 Still **not** built — don't assume these exist: cross-restart persistence of the
-local *workspace* (variables), local-engine data-import, per-project engine choice,
-and (backend) network-egress restriction in the dev profile or per-request VM
-isolation.
+local *workspace* (variables), per-project engine choice, and (backend)
+network-egress restriction in the dev profile or per-request VM isolation.
