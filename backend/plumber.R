@@ -428,7 +428,10 @@ function() {
 #* @get /packages
 function(sessionId = "default") {
   lib <- session_paths(sanitize_session_id(sessionId))$rlib
-  pkgs <- tryCatch(rownames(installed.packages(lib.loc = lib)), error = function(e) NULL)
+  # noCache: installed.packages() caches per libpath, and this plumber process is
+  # long-lived — without noCache a package installed since the first listing can
+  # be missed, so a just-installed package appears absent.
+  pkgs <- tryCatch(rownames(installed.packages(lib.loc = lib, noCache = TRUE)), error = function(e) NULL)
   if (is.null(pkgs)) pkgs <- character(0)
   list(packages = as.list(pkgs))
 }

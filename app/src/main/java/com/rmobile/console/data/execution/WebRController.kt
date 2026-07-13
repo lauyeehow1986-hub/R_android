@@ -68,12 +68,45 @@ class WebRController(context: Context) {
         }
     }
 
+    // Persist the on-device package library across app restarts as a gzip tarball
+    // under filesDir. Transferred in base64 chunks (the bridge marshals strings),
+    // so a large library doesn't hit a single-call size limit. This deliberately
+    // avoids WebR's IDBFS FS.mount, which destabilised the eval channel.
+    private val snapshotFile get() = java.io.File(appContext.filesDir, "webr-library.tar.gz")
+    private val snapshotTmp get() = java.io.File(appContext.filesDir, "webr-library.tar.gz.tmp")
+
     private inner class Bridge {
         @JavascriptInterface fun onReady() { ready.complete(Unit) }
         @JavascriptInterface fun onError(message: String) {
             if (!ready.isCompleted) ready.completeExceptionally(IllegalStateException(message))
         }
         @JavascriptInterface fun onResult(id: Int, json: String) { pending.remove(id)?.complete(json) }
+
+        @JavascriptInterface fun snapshotSize(): Int =
+            if (snapshotFile.exists()) snapshotFile.length().toInt() else 0
+
+        @JavascriptInterface fun snapshotRead(offset: Int, length: Int): String = try {
+            val f = snapshotFile
+            val total = if (f.exists()) f.length().toInt() else 0
+            if (offset >= total) "" else {
+                val buf = ByteArray(minOf(offset + length, total) - offset)
+                java.io.RandomAccessFile(f, "r").use { it.seek(offset.toLong()); it.readFully(buf) }
+                android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
+            }
+        } catch (e: Exception) { "" }
+
+        @JavascriptInterface fun snapshotBegin() {
+            try { snapshotTmp.delete(); snapshotTmp.parentFile?.mkdirs(); snapshotTmp.createNewFile() } catch (e: Exception) {}
+        }
+        @JavascriptInterface fun snapshotAppend(b64: String) {
+            try {
+                val bytes = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
+                java.io.FileOutputStream(snapshotTmp, true).use { it.write(bytes) }
+            } catch (e: Exception) {}
+        }
+        @JavascriptInterface fun snapshotCommit() {
+            try { if (snapshotTmp.exists()) { snapshotFile.delete(); snapshotTmp.renameTo(snapshotFile) } } catch (e: Exception) {}
+        }
     }
 
     /** Runs a full ExecuteRequest (as JSON) and returns the bridge's ExecuteResponse JSON. */
@@ -82,6 +115,17 @@ class WebRController(context: Context) {
 
     /** Clears the WebR global env and returns the bridge's reset JSON. */
     suspend fun reset(): String = callBridge("window.webrReset", null)
+
+    /** Installs a package from the bundled mini-repo and returns the bridge's InstallResponse JSON. */
+    suspend fun installPackage(pkg: String): String =
+        callBridge("window.webrInstall", org.json.JSONObject.quote(pkg))
+
+    /** Removes an installed package and returns the bridge's UninstallResponse JSON. */
+    suspend fun uninstallPackage(pkg: String): String =
+        callBridge("window.webrUninstall", org.json.JSONObject.quote(pkg))
+
+    /** Lists installed packages and returns the bridge's PackagesResponse JSON. */
+    suspend fun listPackages(): String = callBridge("window.webrListPackages", null)
 
     /**
      * Invokes a bridge function that takes the result id as its first argument and

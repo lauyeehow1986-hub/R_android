@@ -38,10 +38,25 @@ object NetworkModule {
         hostSelectionInterceptor.apiKey = apiKey.takeIf { it.isNotBlank() }
     }
 
+    // Package-management endpoints are slow: a first backend install.packages()
+    // downloads CRAN's multi-MB package index before installing, easily exceeding
+    // a 30s cap. Give just those a long read timeout; everything else (notably
+    // /execute) keeps the snappy default so a hung backend fails fast.
+    private val slowPackageEndpoints = listOf("/install", "/uninstall", "/import-legacy")
+
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .callTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(hostSelectionInterceptor)
+            .addInterceptor { chain ->
+                val path = chain.request().url.encodedPath
+                if (slowPackageEndpoints.any { path.endsWith(it) }) {
+                    chain.withReadTimeout(180, TimeUnit.SECONDS).proceed(chain.request())
+                } else {
+                    chain.proceed(chain.request())
+                }
+            }
             .addInterceptor(
                 HttpLoggingInterceptor().apply {
                     level = if (BuildConfig.DEBUG) {

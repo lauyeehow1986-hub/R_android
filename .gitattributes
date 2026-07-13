@@ -1,3 +1,10 @@
 # Vendored WebR runtime: treat as binary so git never rewrites line endings
 # (byte-exact across platforms; the emscripten/WASM assets must not be touched).
 app/src/main/assets/webr/dist/** -text
+app/src/main/assets/webr/repo/** -text
+
+# R source + shell scripts under webr/ MUST stay LF: a CRLF checkout (Windows
+# autocrlf) puts a stray \r into harness.R that WebR's R parser rejects as an
+# "invalid token", breaking every on-device run. Force LF regardless of platform.
+app/src/main/assets/webr/*.R text eol=lf
+app/src/main/assets/webr/scripts/*.sh text eol=lf

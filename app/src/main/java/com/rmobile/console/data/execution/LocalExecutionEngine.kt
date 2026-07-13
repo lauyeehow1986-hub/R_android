@@ -2,6 +2,11 @@ package com.rmobile.console.data.execution
 
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.InstallRequest
+import com.rmobile.console.data.model.InstallResponse
+import com.rmobile.console.data.model.PackagesResponse
+import com.rmobile.console.data.model.UninstallRequest
+import com.rmobile.console.data.model.UninstallResponse
 import kotlinx.serialization.json.Json
 
 /** On-device WebR engine. Serializes the request to the bridge and parses its ExecuteResponse. */
@@ -16,5 +21,17 @@ class LocalExecutionEngine(
 
     override suspend fun reset(sessionId: String): Result<Unit> = runCatching {
         controller.reset(); Unit
+    }
+
+    override suspend fun listPackages(sessionId: String): Result<PackagesResponse> = runCatching {
+        json.decodeFromString<PackagesResponse>(controller.listPackages())
+    }
+
+    override suspend fun install(request: InstallRequest): Result<InstallResponse> = runCatching {
+        json.decodeFromString<InstallResponse>(controller.installPackage(request.packageName))
+    }
+
+    override suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse> = runCatching {
+        json.decodeFromString<UninstallResponse>(controller.uninstallPackage(request.packageName))
     }
 }

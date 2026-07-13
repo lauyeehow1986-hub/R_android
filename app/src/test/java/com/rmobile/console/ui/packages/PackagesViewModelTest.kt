@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -72,8 +73,31 @@ class PackagesViewModelTest {
         override fun persistLastOpenProjectId(id: Long?) { lastId = id }
     }
 
-    private fun viewModel(api: FakeApi, projectStore: ProjectStore = InMemoryProjectStore()) =
-        PackagesViewModel(RExecutionRepository(api), projectStore)
+    private fun viewModel(
+        api: FakeApi,
+        projectStore: ProjectStore = InMemoryProjectStore(),
+        engineIsLocal: Boolean = false,
+    ): PackagesViewModel {
+        val repo = RExecutionRepository(api)
+        return PackagesViewModel(
+            repository = repo,
+            projectStore = projectStore,
+            engineProvider = { com.rmobile.console.data.execution.RemoteExecutionEngine(repo) },
+            engineIsLocalProvider = { engineIsLocal },
+        )
+    }
+
+    private class FakeEngine : com.rmobile.console.data.execution.ExecutionEngine {
+        var installedArg: String? = null
+        override suspend fun execute(request: ExecuteRequest) = Result.success(ExecuteResponse())
+        override suspend fun reset(sessionId: String) = Result.success(Unit)
+        override suspend fun listPackages(sessionId: String) = Result.success(PackagesResponse(listOf("local-pkg")))
+        override suspend fun install(request: InstallRequest): Result<InstallResponse> {
+            installedArg = request.packageName
+            return Result.success(InstallResponse(installed = true))
+        }
+        override suspend fun uninstall(request: UninstallRequest) = Result.success(UninstallResponse(removed = true))
+    }
 
     @Test
     fun `loads installed packages on init`() = runTest {
@@ -180,5 +204,54 @@ class PackagesViewModelTest {
         assertFalse(s.isError)
         assertEquals("Imported 3 package(s).", s.message)
         assertEquals(listOf("a", "b", "c"), s.installed)
+    }
+
+    @Test
+    fun `routes install through the provided engine, not the repository`() = runTest {
+        val api = FakeApi()
+        val fakeEngine = FakeEngine()
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(api),
+            projectStore = InMemoryProjectStore(),
+            engineProvider = { fakeEngine },
+            engineIsLocalProvider = { true },
+        )
+        advanceUntilIdle()
+        assertEquals(listOf("local-pkg"), vm.uiState.value.installed)
+        vm.onPackageNameChanged("dplyr")
+        vm.install()
+        advanceUntilIdle()
+        assertEquals("dplyr", fakeEngine.installedArg)
+        assertNull(api.lastInstallSessionId)
+    }
+
+    @Test
+    fun `engineIsLocal is reflected in state`() = runTest {
+        val vm = viewModel(FakeApi(), engineIsLocal = true)
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.engineIsLocal)
+    }
+
+    @Test
+    fun `onShown re-reads the engine and reloads the list`() = runTest {
+        var local = false
+        val api = FakeApi(packagesResponse = PackagesResponse(listOf("glue")))
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(api),
+            projectStore = InMemoryProjectStore(),
+            engineProvider = { com.rmobile.console.data.execution.RemoteExecutionEngine(RExecutionRepository(api)) },
+            engineIsLocalProvider = { local },
+        )
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.engineIsLocal)
+
+        // Engine switched (e.g. in Settings) and a package installed while away.
+        local = true
+        api.packagesResponse = PackagesResponse(listOf("glue", "praise"))
+        vm.onShown()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.engineIsLocal)
+        assertEquals(listOf("glue", "praise"), vm.uiState.value.installed)
     }
 }

@@ -401,15 +401,42 @@ the **default** and the network backend as an opt-in **Remote** engine, chosen b
 a Settings toggle. Both engines return the identical `ExecuteResponse` contract
 (stdout/stderr/plots/tables/workspaceObjects/timedOut), so the UI is
 engine-agnostic; the WebR harness (`assets/webr/harness.R`) mirrors the backend's
-`withVisible` loop + `TABLE_EMIT_HELPERS`. **v1 boundaries (deliberate, not built
-yet)** — the Local engine has **no package install** (only WebR's built-in
-packages), **no data-import** (uploaded files aren't visible to local runs), and
-**no workspace persistence across app restarts** (the live WebR instance is the
-session, so it survives runs within a process but resets on relaunch); **engine
-choice is app-wide, not per-project**. Data & Packages screens carry a note that
-they apply to the Remote engine. These are documented fast-follows.
+`withVisible` loop + `TABLE_EMIT_HELPERS`. The Local engine also supports
+**on-device package install** — `ExecutionEngine` carries `listPackages`/`install`/
+`uninstall` (Remote delegates to the backend endpoints; Local delegates to
+`WebRController` → `bridge.js` `webrInstall`/`webrUninstall`/`webrListPackages`),
+and `PackagesViewModel` routes them through `ServiceLocator.currentExecutionEngine()`.
+Local installs are **hybrid-sourced** — `webr::install(pkg, repos = c(<bundled repo>,
+"https://repo.r-wasm.org"))` searches a bundled mini-repo (`assets/webr/repo/`,
+vendored by `scripts/fetch-webr-packages.mjs`: tidyverse + easystats core + full
+dependency closure, installable **offline**) before falling back to the network for
+anything else. The local **PACKAGES index must carry each package's full upstream
+control block** (Depends/Imports/LinkingTo/MD5sum), or WebR installs a top-level
+package without its deps and it fails to load. Packages install into a user library
+(`/rmobile/library`, created lazily and prepended to `.libPaths()` inside the package
+ops **only** — never at boot, so the run path is untouched). WebR installs each
+package as a **mounted FS image**, so uninstall must `webR.FS.unmount` the package
+path first, then `chmod`+`unlink` any leftover files (an app-restart restores packages
+as plain read-only files instead — the unmount is then a no-op and the unlink clears
+them); removal is confirmed via `installed.packages(noCache = TRUE)` (not the
+directory, which an unmounted mount leaves behind empty), and the namespace is
+unloaded afterward so a loaded package stops working immediately. The library **persists across app restarts** via a
+**snapshot/restore** mechanism (NOT IDBFS `FS.mount`, which destabilised the eval
+channel): after each install/uninstall the library is `utils::tar`'d and streamed to
+Kotlin in base64 chunks (`WebRController` stores it under `filesDir`), and at boot
+it's written back and `utils::untar(..., tar = "internal")`'d before ready
+(`tar="internal"` is required — the default untar shells out via `system()`, which
+Emscripten forbids). `bridge.js` also **strips CR from harness.R** on load: a CRLF
+(Windows autocrlf) checkout otherwise leaves a stray `\r` after `local({` that WebR's
+R parser rejects (`.gitattributes` also pins `webr/*.R` to LF). **v1 boundaries
+(deliberate, not built yet)** — the local **workspace** (variables) is still
+in-process (resets on app restart), there's **no data-import** (uploaded files aren't
+visible to local runs), and **engine choice is app-wide, not per-project**. The Data
+screen carries a note that it applies to the Remote engine; the Packages screen adapts
+its caption to the active engine and hides the legacy-import action on Local. These
+are documented fast-follows.
 
-Still **not** built — don't assume these exist: on-device package installation,
-local-engine data-import, cross-restart local workspace persistence, per-project
-engine choice, and (backend) network-egress restriction in the dev profile or
-per-request VM isolation.
+Still **not** built — don't assume these exist: cross-restart persistence of the
+local *workspace* (variables), local-engine data-import, per-project engine choice,
+and (backend) network-egress restriction in the dev profile or per-request VM
+isolation.

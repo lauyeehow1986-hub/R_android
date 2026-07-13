@@ -103,16 +103,27 @@ the AAPT `.gz` note:
 bash app/src/main/assets/webr/scripts/fetch-webr.sh
 ```
 
+The bundled offline package repo (core tidyverse/easystats + dependencies, used
+by the Local engine's package install) is vendored separately — re-vendor or
+extend the set with:
+
+```bash
+bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
+```
+
 ## Features
 
 - **On-device execution (WebR)** — run R fully offline with a bundled WebR
   runtime (real GNU R → WebAssembly); this **Local** engine is the default and
   keeps code and data on the phone. Switch to the **Remote** (backend) engine in
   Settings for full CRAN package support. Both produce the same output
-  (stdout/stderr, plots, tables, workspace). *v1 limits:* the Local engine uses
-  only WebR's built-in packages, can't see uploaded data files, and its workspace
-  resets when the app restarts — data import and installed packages apply to the
-  Remote engine.
+  (stdout/stderr, plots, tables, workspace). The Local engine can now **install
+  packages** too — core tidyverse/easystats packages install fully offline from a
+  bundled repo, and anything else downloads on demand; the on-device library
+  **persists across app restarts** (snapshotted to the app's private storage).
+  *v1 limits:* the Local engine can't see uploaded data files, and its workspace
+  (variables) resets when the app restarts — data import applies to the Remote
+  engine.
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
 - **R syntax highlighting** and a **quick-insert bar** for common operators
   (`<-`, `|>`, `%>%`, `()`, …).
@@ -149,9 +160,8 @@ bash app/src/main/assets/webr/scripts/fetch-webr.sh
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
-Not built yet: on-device package installation, local-engine data import,
-cross-restart local workspace persistence, per-project engine choice, iOS-app
-feature parity.
+Not built yet: cross-restart persistence of the local *workspace* (variables),
+local-engine data import, per-project engine choice, iOS-app feature parity.
 
 ## Development
 

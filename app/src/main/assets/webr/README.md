@@ -51,6 +51,38 @@ request for `*.data.gz` 404s with *"Can't download filesystem image data"*.
 rewrites each `*.js.metadata` to `"gzip":false`, so WebR fetches the `*.data`
 directly (which survives AAPT untouched). Do not re-introduce `.gz` assets here.
 
+## Bundled package repo (`repo/`)
+
+The Local engine can install R packages on-device. A small, curated set installs
+**fully offline** from a mini-repo bundled here; anything else downloads from
+WebR's public repo (`https://repo.r-wasm.org`). The bridge calls
+`webr::install(pkg, repos = c(<bundled repo>, "https://repo.r-wasm.org"))`, so the
+bundled repo is searched first and the network is the fallback.
+
+- `repo/bin/emscripten/contrib/<R-minor>/` mirrors r-wasm's binary layout: a
+  `PACKAGES` index plus `<pkg>_<ver>.tgz` WASM binaries.
+- `scripts/fetch-webr-packages.mjs` (run via `scripts/fetch-webr-packages.sh`,
+  needs Node 18+ and internet) resolves the **full recursive dependency closure**
+  of the seed set from r-wasm and vendors every `.tgz`, then writes a local
+  `PACKAGES`. The seed set is a single array at the top of the `.mjs`
+  (tidyverse core: dplyr, tidyr, ggplot2, readr, stringr, tibble, purrr, forcats,
+  lubridate; easystats core: parameters, performance, effectsize, insight,
+  datawizard; plus jsonlite, cli). Edit it to change what ships offline.
+- These are `.tgz`, not `.gz`, so the AAPT auto-gunzip issue that affects the VFS
+  images (above) does **not** apply — do not introduce bare `.gz` files under
+  `repo/`.
+- Installed packages land in a user library (`/rmobile/library`, prepended to
+  `.libPaths()` lazily by the package ops — never at boot, so the run path is
+  unaffected). The library **persists across app restarts** via snapshot/restore:
+  after each install/uninstall it's `utils::tar`'d and streamed to Kotlin in base64
+  chunks (stored under `filesDir`), then written back and
+  `utils::untar(..., tar = "internal")`'d at boot. `tar="internal"` is required —
+  the default `untar` shells out via `system()`, which Emscripten/WebR forbids. This
+  deliberately avoids WebR's IDBFS `FS.mount`, which destabilised the eval channel.
+- `bridge.js` strips `\r` from `harness.R` on load, and `.gitattributes` pins
+  `webr/*.R` to LF: a CRLF checkout otherwise leaves a stray `\r` after `local({`
+  that WebR's R parser rejects, breaking every run.
+
 ## License
 
 WebR is distributed under the **GPL** (GNU General Public License) — the same

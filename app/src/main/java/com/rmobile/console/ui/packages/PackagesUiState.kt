@@ -8,4 +8,5 @@ data class PackagesUiState(
     val log: String = "",
     val isError: Boolean = false,
     val projectName: String = "",
+    val engineIsLocal: Boolean = false,
 )
