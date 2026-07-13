@@ -61,9 +61,7 @@ fun DataScreen(
                     if (sizeIdx >= 0 && !c.isNull(sizeIdx)) size = c.getLong(sizeIdx)
                 }
             }
-            val body = UriRequestBody(
-                context.contentResolver, uri, size, "application/octet-stream".toMediaTypeOrNull(),
-            )
+            val body = UriRequestBody({ context.contentResolver.openInputStream(uri)!! }, size, "application/octet-stream".toMediaTypeOrNull())
             viewModel.upload(MultipartBody.Part.createFormData("file", name, body))
         }
     }
