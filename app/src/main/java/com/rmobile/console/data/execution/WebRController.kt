@@ -75,6 +75,13 @@ class WebRController(context: Context) {
     private val snapshotFile get() = java.io.File(appContext.filesDir, "webr-library.tar.gz")
     private val snapshotTmp get() = java.io.File(appContext.filesDir, "webr-library.tar.gz.tmp")
 
+    // On-device data files live at filesDir/localdata/<sanitized-session>/ (written
+    // by LocalSessionDataStore); the bridge pulls them into WebR on demand.
+    private fun localDataDir(sessionId: String): java.io.File {
+        val safe = sessionId.filter { it.isLetterOrDigit() || it == '_' || it == '-' }.ifBlank { "default" }
+        return java.io.File(java.io.File(appContext.filesDir, "localdata"), safe)
+    }
+
     private inner class Bridge {
         @JavascriptInterface fun onReady() { ready.complete(Unit) }
         @JavascriptInterface fun onError(message: String) {
@@ -107,6 +114,22 @@ class WebRController(context: Context) {
         @JavascriptInterface fun snapshotCommit() {
             try { if (snapshotTmp.exists()) { snapshotFile.delete(); snapshotTmp.renameTo(snapshotFile) } } catch (e: Exception) {}
         }
+
+        @JavascriptInterface fun dataList(sessionId: String): String {
+            val files = (localDataDir(sessionId).listFiles() ?: emptyArray()).filter { it.isFile }
+            return org.json.JSONArray().apply {
+                files.forEach { put(org.json.JSONObject().put("name", it.name).put("size", it.length())) }
+            }.toString()
+        }
+        @JavascriptInterface fun dataChunk(sessionId: String, name: String, offset: Int, length: Int): String = try {
+            val f = java.io.File(localDataDir(sessionId), name)
+            if (!f.exists() || offset >= f.length()) "" else {
+                val end = minOf(offset + length, f.length().toInt())
+                val buf = ByteArray(end - offset)
+                java.io.RandomAccessFile(f, "r").use { it.seek(offset.toLong()); it.readFully(buf) }
+                android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
+            }
+        } catch (e: Exception) { "" }
     }
 
     /** Runs a full ExecuteRequest (as JSON) and returns the bridge's ExecuteResponse JSON. */

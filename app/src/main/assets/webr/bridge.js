@@ -92,6 +92,53 @@ async function restoreLibrary() {
   } catch (e) { lastRestoreInfo = 'restore failed: ' + String(e); }
 }
 
+const DATA_CHUNK = 512 * 1024;
+
+// Lazily mirror the session's on-device data files into /rmobile/data/<session>
+// (persists for the app process), pulling only new/changed files and dropping
+// deleted ones. Chunked base64 transfer, like the library snapshot.
+async function syncData(sessionId) {
+  const dir = `/rmobile/data/${sessionId}`;
+  await webR.evalRVoid(`dir.create(${JSON.stringify(dir)}, showWarnings = FALSE, recursive = TRUE)`);
+  let wanted;
+  try { wanted = JSON.parse(AndroidBridge.dataList(sessionId)); } catch (e) { return; }
+  const wantedNames = new Set(wanted.map((f) => f.name));
+  const haveR = await webR.evalR(`list.files(${JSON.stringify(dir)})`);
+  const have = await haveR.toArray(); webR.destroy(haveR);
+  for (const name of have) if (!wantedNames.has(name)) {
+    await webR.evalRVoid(`unlink(file.path(${JSON.stringify(dir)}, ${JSON.stringify(name)}))`);
+  }
+  for (const f of wanted) {
+    const path = `${dir}/${f.name}`;
+    let size = -1;
+    try {
+      const sz = await webR.evalR(`if (file.exists(${JSON.stringify(path)})) file.info(${JSON.stringify(path)})$size else -1`);
+      size = (await sz.toArray())[0]; webR.destroy(sz);
+    } catch (e) {}
+    if (size === f.size) continue;
+    const parts = [];
+    for (let off = 0; off < f.size; off += DATA_CHUNK) {
+      const b64 = AndroidBridge.dataChunk(sessionId, f.name, off, DATA_CHUNK);
+      if (!b64) break;
+      parts.push(b64ToBytes(b64));
+    }
+    let total = 0; for (const p of parts) total += p.length;
+    const all = new Uint8Array(total); let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
+    await webR.FS.writeFile(path, all);
+  }
+}
+
+// Make the session's data files readable by bare name from the run cwd. Called
+// AFTER the run's own files are written, and file.symlink fails (silently) if the
+// link name already exists, so a same-named run file shadows a data file.
+async function linkData(sessionId) {
+  const dir = `/rmobile/data/${sessionId}`;
+  await webR.evalRVoid(
+    `local({ d <- ${JSON.stringify(dir)}; if (dir.exists(d)) for (f in list.files(d, full.names = TRUE)) ` +
+    `try(file.symlink(f, file.path("/rmobile/run", basename(f))), silent = TRUE) })`
+  );
+}
+
 async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
@@ -130,12 +177,14 @@ async function resetRunDir() {
 
 async function runOnce(req) {
   await resetRunDir();
+  if (req.sessionId) { try { await syncData(req.sessionId); } catch (e) {} }
   const files = req.files && req.files.length ? req.files
     : [{ name: 'script.R', content: req.code || '' }];
   const entry = req.entryFile || files[0].name;
   for (const f of files) {
     await webR.FS.writeFile(`/rmobile/run/${f.name}`, new TextEncoder().encode(f.content));
   }
+  if (req.sessionId) { try { await linkData(req.sessionId); } catch (e) {} }
   // Load the harness template and inject the entry file path. Normalise line
   // endings: a CRLF checkout (Windows autocrlf) would otherwise leave a stray \r
   // after `local({`, which WebR's R parser rejects as an "unexpected invalid
@@ -268,4 +317,47 @@ window.webrListPackages = async (id) => {
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ packages: [] }));
   }
+};
+
+// Read-only preview: render an on-device data file or a workspace object as one
+// RTable (capped at 200 rows), without mutating the session. Mirrors the backend
+// /preview endpoint's file/object handling for the Local engine.
+window.webrPreview = async (id, requestJson) => {
+  if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'WebR not ready', truncated: false })); return; }
+  const req = JSON.parse(requestJson);
+  const shelter = await new webR.Shelter();
+  try {
+    if (req.source === 'file' && req.sessionId) await syncData(req.sessionId);
+    const path = req.source === 'file' ? `/rmobile/data/${req.sessionId}/${req.name}` : null;
+    const rExpr = req.source === 'file'
+      ? `local({ p <- ${JSON.stringify(path)}; ext <- tolower(tools::file_ext(p)); ` +
+        `if (ext %in% c('csv')) read.csv(p, check.names = FALSE) ` +
+        `else if (ext %in% c('tsv')) read.delim(p, check.names = FALSE) ` +
+        `else if (ext %in% c('rds')) readRDS(p) ` +
+        `else stop(sprintf('Preview of .%s files needs the Remote engine.', ext)) })`
+      : `get(${JSON.stringify(req.name)}, envir = globalenv())`;
+    await webR.evalRVoid(`.pv <- try(${rExpr}, silent = TRUE)`);
+    const okR = await webR.evalR(`!inherits(.pv, "try-error")`);
+    const ok = (await okR.toArray())[0] === true; webR.destroy(okR);
+    if (!ok) {
+      const eR = await webR.evalR(`as.character(attr(.pv, "condition")$message)`);
+      const msg = (await eR.toArray())[0] || 'Could not read for preview.'; webR.destroy(eR);
+      await webR.evalRVoid('if (exists(".pv")) rm(.pv)');
+      AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(msg), truncated: false }));
+      return;
+    }
+    const tableJson = await webR.evalR(
+      `local({ df <- as.data.frame(.pv); n <- nrow(df); sub <- utils::head(df, 200); ` +
+      `cols <- names(sub); types <- vapply(sub, function(c) class(c)[1], character(1)); ` +
+      `cells <- lapply(sub, function(c) as.character(format(c, trim = TRUE))); ` +
+      `rows <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(c) c[i], character(1)))); ` +
+      `jsonlite::toJSON(list(columns = as.character(cols), columnTypes = as.character(types), rows = rows, ` +
+      `totalRows = jsonlite::unbox(as.integer(n))), auto_unbox = FALSE) })`
+    );
+    const table = JSON.parse((await tableJson.toArray())[0]); webR.destroy(tableJson);
+    await webR.evalRVoid('rm(.pv)');
+    AndroidBridge.onResult(id, JSON.stringify({ table, error: null, truncated: table.totalRows > 200 }));
+  } catch (e) {
+    AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));
+  } finally { shelter.purge(); }
 };
