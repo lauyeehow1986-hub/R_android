@@ -1,27 +1,8 @@
 package com.rmobile.console.ui.data
 
-import com.rmobile.console.data.RExecutionRepository
+import com.rmobile.console.data.datafiles.DataUpload
+import com.rmobile.console.data.datafiles.SessionDataStore
 import com.rmobile.console.data.model.DataFile
-import com.rmobile.console.data.model.DataFilesResponse
-import com.rmobile.console.data.model.DeleteDataRequest
-import com.rmobile.console.data.model.DeleteDataResponse
-import com.rmobile.console.data.model.ExecuteRequest
-import com.rmobile.console.data.model.ExecuteResponse
-import com.rmobile.console.data.model.HelpRequest
-import com.rmobile.console.data.model.HelpResponse
-import com.rmobile.console.data.model.ImportLegacyRequest
-import com.rmobile.console.data.model.ImportLegacyResponse
-import com.rmobile.console.data.model.InstallRequest
-import com.rmobile.console.data.model.InstallResponse
-import com.rmobile.console.data.model.PackagesResponse
-import com.rmobile.console.data.model.ResetRequest
-import com.rmobile.console.data.model.ResetResponse
-import com.rmobile.console.data.model.SymbolsResponse
-import com.rmobile.console.data.model.UninstallRequest
-import com.rmobile.console.data.model.UninstallResponse
-import com.rmobile.console.data.model.UploadResponse
-import com.rmobile.console.data.network.RDataApi
-import com.rmobile.console.data.network.RExecutionApi
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.project.ProjectStore
@@ -29,105 +10,73 @@ import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import okhttp3.MultipartBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import java.io.ByteArrayInputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DataViewModelTest {
+    @get:Rule val mainDispatcherRule = MainDispatcherRule()
 
-    @get:Rule
-    val mainDispatcherRule = MainDispatcherRule()
-
-    private class NoopExecApi : RExecutionApi {
-        override suspend fun execute(request: ExecuteRequest) = ExecuteResponse()
-        override suspend fun reset(request: ResetRequest) = ResetResponse(ok = true)
-        override suspend fun install(request: InstallRequest) = InstallResponse()
-        override suspend fun uninstall(request: UninstallRequest) = UninstallResponse()
-        override suspend fun packages(sessionId: String) = PackagesResponse()
-        override suspend fun importLegacy(request: ImportLegacyRequest) = ImportLegacyResponse()
-        override suspend fun symbols(sessionId: String) = SymbolsResponse()
-        override suspend fun help(request: HelpRequest) = HelpResponse()
-        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) =
-            com.rmobile.console.data.model.PreviewResponse()
-    }
-
-    private class FakeDataApi(
-        var files: DataFilesResponse = DataFilesResponse(listOf(DataFile("a.csv", 10))),
-        var upload: UploadResponse = UploadResponse("b.csv", 20),
-        var delete: DeleteDataResponse = DeleteDataResponse(removed = true),
-    ) : RDataApi {
-        var lastDataSession: String? = null
-        var lastUploadSession: String? = null
-        var lastDelete: DeleteDataRequest? = null
-        override suspend fun upload(sessionId: String, file: MultipartBody.Part): UploadResponse {
-            lastUploadSession = sessionId; return upload
-        }
-        override suspend fun dataFiles(sessionId: String): DataFilesResponse {
-            lastDataSession = sessionId; return files
-        }
-        override suspend fun deleteData(request: DeleteDataRequest): DeleteDataResponse {
-            lastDelete = request; return delete
-        }
+    private class FakeStore(var files: List<DataFile> = listOf(DataFile("a.csv", 10))) : SessionDataStore {
+        var lastListSession: String? = null
+        var lastSaveSession: String? = null
+        var deleted: String? = null
+        override suspend fun list(sessionId: String): Result<List<DataFile>> { lastListSession = sessionId; return Result.success(files) }
+        override suspend fun save(sessionId: String, upload: DataUpload): Result<Unit> { lastSaveSession = sessionId; return Result.success(Unit) }
+        override suspend fun delete(sessionId: String, name: String): Result<Boolean> { deleted = name; return Result.success(true) }
     }
 
     private class InMemoryProjectStore(initial: List<Project> = emptyList(), var lastId: Long? = null) : ProjectStore {
-        var stored: List<Project> = initial
+        var stored = initial
         override fun loadProjects() = stored
         override fun persistProjects(projects: List<Project>) { stored = projects }
         override fun loadLastOpenProjectId() = lastId
         override fun persistLastOpenProjectId(id: Long?) { lastId = id }
     }
 
-    private fun vm(
-        dataApi: FakeDataApi,
-        projectStore: ProjectStore = InMemoryProjectStore(),
-    ) = DataViewModel(RExecutionRepository(NoopExecApi(), dataApi), projectStore)
+    private fun upload(name: String, n: Int = 3) = DataUpload(name, n.toLong()) { ByteArrayInputStream(ByteArray(n)) }
 
-    private fun part() =
-        MultipartBody.Part.createFormData("file", "b.csv", "x".toRequestBody())
+    private fun vm(store: FakeStore, projectStore: ProjectStore = InMemoryProjectStore(), local: Boolean = true) =
+        DataViewModel(dataStoreProvider = { store }, projectStore = projectStore, engineIsLocalProvider = { local })
 
-    @Test
-    fun `loads files on init`() = runTest {
-        val vm = vm(FakeDataApi(files = DataFilesResponse(listOf(DataFile("a.csv", 10)))))
+    @Test fun `loads files on init`() = runTest {
+        val vm = vm(FakeStore(listOf(DataFile("a.csv", 1), DataFile("b.csv", 2))))
         advanceUntilIdle()
-        assertEquals(listOf(DataFile("a.csv", 10)), vm.uiState.value.files)
+        assertEquals(listOf("a.csv", "b.csv"), vm.uiState.value.files.map { it.name })
     }
-
-    @Test
-    fun `upload refreshes the list`() = runTest {
-        val api = FakeDataApi(files = DataFilesResponse(emptyList()))
-        val vm = vm(api)
-        advanceUntilIdle()
-        api.files = DataFilesResponse(listOf(DataFile("b.csv", 20)))
-        vm.upload(part())
-        advanceUntilIdle()
-        assertEquals(listOf(DataFile("b.csv", 20)), vm.uiState.value.files)
-        assertTrue(!vm.uiState.value.uploading)
+    @Test fun `upload routes to the store and refreshes`() = runTest {
+        val store = FakeStore(emptyList())
+        val vm = vm(store); advanceUntilIdle()
+        store.files = listOf(DataFile("new.csv", 3))
+        vm.upload(upload("new.csv")); advanceUntilIdle()
+        assertEquals("proj_or_default_nonnull", store.lastSaveSession?.let { "proj_or_default_nonnull" })
+        assertEquals(listOf("new.csv"), vm.uiState.value.files.map { it.name })
     }
-
-    @Test
-    fun `delete refreshes the list`() = runTest {
-        val api = FakeDataApi(files = DataFilesResponse(listOf(DataFile("a.csv", 10))))
-        val vm = vm(api)
-        advanceUntilIdle()
-        api.files = DataFilesResponse(emptyList())
-        vm.delete("a.csv")
-        advanceUntilIdle()
-        assertEquals("a.csv", api.lastDelete!!.name)
+    @Test fun `delete routes to the store`() = runTest {
+        val store = FakeStore(listOf(DataFile("a.csv", 1)))
+        val vm = vm(store); advanceUntilIdle()
+        store.files = emptyList()
+        vm.delete("a.csv"); advanceUntilIdle()
+        assertEquals("a.csv", store.deleted)
         assertTrue(vm.uiState.value.files.isEmpty())
     }
-
-    @Test
-    fun `uses the active project session`() = runTest {
-        val project = ProjectOps.newProject(id = 100, name = "MyProj", now = 0)
-        val store = InMemoryProjectStore(initial = listOf(project), lastId = 100)
-        val api = FakeDataApi()
-        vm(api, store)
-        advanceUntilIdle()
-        assertEquals("proj-100", api.lastDataSession)
+    @Test fun `uses the active project session`() = runTest {
+        val project = ProjectOps.newProject(id = 7, name = "P", now = 0)
+        val store = FakeStore()
+        vm(store, InMemoryProjectStore(listOf(project), 7)); advanceUntilIdle()
+        assertEquals("proj-7", store.lastListSession)
+    }
+    @Test fun `large-file warning flag`() = runTest {
+        val vm = vm(FakeStore()); advanceUntilIdle()
+        assertFalse(vm.warnLargeFile(100L * 1024 * 1024))
+        assertTrue(vm.warnLargeFile(300L * 1024 * 1024))
+    }
+    @Test fun `no large-file warning on remote`() = runTest {
+        val vm = vm(FakeStore(), local = false); advanceUntilIdle()
+        assertFalse(vm.warnLargeFile(300L * 1024 * 1024))
     }
 }

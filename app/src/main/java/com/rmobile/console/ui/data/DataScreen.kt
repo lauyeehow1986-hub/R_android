@@ -26,7 +26,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,9 +38,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.rmobile.console.data.network.UriRequestBody
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.MultipartBody
+import com.rmobile.console.data.datafiles.DataUpload
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +50,9 @@ fun DataScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var pendingLargeUpload by remember { mutableStateOf<DataUpload?>(null) }
+
+    LaunchedEffect(Unit) { viewModel.onShown() }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -61,8 +66,11 @@ fun DataScreen(
                     if (sizeIdx >= 0 && !c.isNull(sizeIdx)) size = c.getLong(sizeIdx)
                 }
             }
-            val body = UriRequestBody({ context.contentResolver.openInputStream(uri)!! }, size, "application/octet-stream".toMediaTypeOrNull())
-            viewModel.upload(MultipartBody.Part.createFormData("file", name, body))
+            val fileUpload = DataUpload(name, size) {
+                context.contentResolver.openInputStream(uri) ?: error("Cannot open file")
+            }
+            if (size > 0 && viewModel.warnLargeFile(size)) pendingLargeUpload = fileUpload
+            else viewModel.upload(fileUpload)
         }
     }
 
@@ -80,7 +88,8 @@ fun DataScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
             Text(
-                "These files apply to the Remote engine.",
+                if (state.engineIsLocal) "On-device (Local) data files — read them in code by name, e.g. read.csv(\"name\")."
+                else "These files apply to the Remote engine.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -124,5 +133,15 @@ fun DataScreen(
                 }
             }
         }
+    }
+
+    pendingLargeUpload?.let { up ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingLargeUpload = null },
+            title = { Text("Large file") },
+            text = { Text("This file is over 200 MB. The on-device engine keeps files in memory and may run out of memory — the Remote engine handles large data better. Upload anyway?") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { viewModel.upload(up); pendingLargeUpload = null }) { Text("Upload anyway") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { pendingLargeUpload = null }) { Text("Cancel") } },
+        )
     }
 }
