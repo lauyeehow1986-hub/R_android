@@ -16,15 +16,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class DataViewModel(
-    private val dataStoreProvider: () -> SessionDataStore = { ServiceLocator.currentSessionDataStore() },
+    private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
+    private val dataStoreProvider: (ExecutionEngineChoice) -> SessionDataStore = { ServiceLocator.dataStoreFor(it) },
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
-    private val engineIsLocalProvider: () -> Boolean =
-        { ServiceLocator.settingsStore.executionEngine == ExecutionEngineChoice.LOCAL },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DataUiState())
     val uiState: StateFlow<DataUiState> = _uiState.asStateFlow()
     private var session: String = RExecutionRepository.DEFAULT_SESSION_ID
+    private var engineChoice: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL
 
     init { resolveContext(); refresh() }
 
@@ -32,20 +32,21 @@ class DataViewModel(
         val projects = projectStore.loadProjects()
         val active = projects.firstOrNull { it.id == projectStore.loadLastOpenProjectId() } ?: projects.firstOrNull()
         session = active?.let { ProjectSession.of(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
-        _uiState.update { it.copy(projectName = active?.name ?: "", engineIsLocal = engineIsLocalProvider()) }
+        engineChoice = ExecutionEngineChoice.resolve(active?.engine, defaultEngine())
+        _uiState.update { it.copy(projectName = active?.name ?: "", engineIsLocal = engineChoice == ExecutionEngineChoice.LOCAL) }
     }
 
     /** Re-resolve engine/session and reload when the screen appears. */
     fun onShown() { resolveContext(); refresh() }
 
     /** True if a file this big risks OOM on the in-memory Local engine. */
-    fun warnLargeFile(size: Long): Boolean = engineIsLocalProvider() && size > 200L * 1024 * 1024
+    fun warnLargeFile(size: Long): Boolean = engineChoice == ExecutionEngineChoice.LOCAL && size > 200L * 1024 * 1024
 
     /** Reloads the file list; leaves it unchanged on failure. */
     fun refresh() {
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            dataStoreProvider().list(session)
+            dataStoreProvider(engineChoice).list(session)
                 .onSuccess { files -> _uiState.update { it.copy(files = files, isLoading = false) } }
                 .onFailure { t -> _uiState.update { it.copy(isLoading = false, error = t.message ?: "Failed to load files.") } }
         }
@@ -55,7 +56,7 @@ class DataViewModel(
         if (_uiState.value.uploading) return
         _uiState.update { it.copy(uploading = true, error = null) }
         viewModelScope.launch {
-            dataStoreProvider().save(session, upload)
+            dataStoreProvider(engineChoice).save(session, upload)
                 .onSuccess {
                     _uiState.update { it.copy(uploading = false) }
                     refresh()
@@ -66,7 +67,7 @@ class DataViewModel(
 
     fun delete(name: String) {
         viewModelScope.launch {
-            dataStoreProvider().delete(session, name)
+            dataStoreProvider(engineChoice).delete(session, name)
                 .onSuccess { removed ->
                     if (removed) refresh()
                     else _uiState.update { it.copy(error = "$name was not deleted.") }

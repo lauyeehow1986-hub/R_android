@@ -8,6 +8,7 @@ import com.rmobile.console.data.execution.ExecutionEngine
 import com.rmobile.console.data.model.PreviewRequest
 import com.rmobile.console.data.project.ProjectSession
 import com.rmobile.console.data.project.ProjectStore
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +16,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class PreviewViewModel(
-    private val engineProvider: () -> ExecutionEngine = { ServiceLocator.currentExecutionEngine() },
+    private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
+    private val engineProvider: (ExecutionEngineChoice) -> ExecutionEngine = { ServiceLocator.engineFor(it) },
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
 ) : ViewModel() {
 
@@ -23,6 +25,7 @@ class PreviewViewModel(
     val uiState: StateFlow<PreviewUiState> = _uiState.asStateFlow()
 
     private var session: String = RExecutionRepository.DEFAULT_SESSION_ID
+    private var engineChoice: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL
 
     init {
         resolveSession()
@@ -33,6 +36,7 @@ class PreviewViewModel(
         val active = projects.firstOrNull { it.id == projectStore.loadLastOpenProjectId() }
             ?: projects.firstOrNull()
         session = active?.let { ProjectSession.of(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
+        engineChoice = ExecutionEngineChoice.resolve(active?.engine, defaultEngine())
     }
 
     /** Loads a preview of [name] (a file or a workspace object per [source]). */
@@ -40,7 +44,7 @@ class PreviewViewModel(
         resolveSession()
         _uiState.value = PreviewUiState(title = name, isLoading = true)
         viewModelScope.launch {
-            engineProvider().preview(PreviewRequest(source, name, session))
+            engineProvider(engineChoice).preview(PreviewRequest(source, name, session))
                 .onSuccess { resp ->
                     _uiState.update {
                         it.copy(

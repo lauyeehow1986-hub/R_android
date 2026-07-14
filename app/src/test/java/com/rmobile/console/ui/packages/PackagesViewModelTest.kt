@@ -16,6 +16,7 @@ import com.rmobile.console.data.network.RExecutionApi
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.project.ProjectStore
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -76,22 +77,22 @@ class PackagesViewModelTest {
     private fun viewModel(
         api: FakeApi,
         projectStore: ProjectStore = InMemoryProjectStore(),
-        engineIsLocal: Boolean = false,
+        defaultEngine: ExecutionEngineChoice = ExecutionEngineChoice.REMOTE,
     ): PackagesViewModel {
         val repo = RExecutionRepository(api)
         return PackagesViewModel(
             repository = repo,
             projectStore = projectStore,
-            engineProvider = { com.rmobile.console.data.execution.RemoteExecutionEngine(repo) },
-            engineIsLocalProvider = { engineIsLocal },
+            defaultEngine = { defaultEngine },
+            engineProvider = { _ -> com.rmobile.console.data.execution.RemoteExecutionEngine(repo) },
         )
     }
 
-    private class FakeEngine : com.rmobile.console.data.execution.ExecutionEngine {
+    private class FakeEngine(val label: String = "local") : com.rmobile.console.data.execution.ExecutionEngine {
         var installedArg: String? = null
         override suspend fun execute(request: ExecuteRequest) = Result.success(ExecuteResponse())
-        override suspend fun reset(sessionId: String) = Result.success(Unit)
-        override suspend fun listPackages(sessionId: String) = Result.success(PackagesResponse(listOf("local-pkg")))
+        override suspend fun reset(sessionId: String, purgePackages: Boolean) = Result.success(Unit)
+        override suspend fun listPackages(sessionId: String) = Result.success(PackagesResponse(listOf("$label-pkg")))
         override suspend fun install(request: InstallRequest): Result<InstallResponse> {
             installedArg = request.packageName
             return Result.success(InstallResponse(installed = true))
@@ -214,8 +215,8 @@ class PackagesViewModelTest {
         val vm = PackagesViewModel(
             repository = RExecutionRepository(api),
             projectStore = InMemoryProjectStore(),
-            engineProvider = { fakeEngine },
-            engineIsLocalProvider = { true },
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { _ -> fakeEngine },
         )
         advanceUntilIdle()
         assertEquals(listOf("local-pkg"), vm.uiState.value.installed)
@@ -228,7 +229,7 @@ class PackagesViewModelTest {
 
     @Test
     fun `engineIsLocal is reflected in state`() = runTest {
-        val vm = viewModel(FakeApi(), engineIsLocal = true)
+        val vm = viewModel(FakeApi(), defaultEngine = ExecutionEngineChoice.LOCAL)
         advanceUntilIdle()
         assertTrue(vm.uiState.value.engineIsLocal)
     }
@@ -240,8 +241,8 @@ class PackagesViewModelTest {
         val vm = PackagesViewModel(
             repository = RExecutionRepository(api),
             projectStore = InMemoryProjectStore(),
-            engineProvider = { com.rmobile.console.data.execution.RemoteExecutionEngine(RExecutionRepository(api)) },
-            engineIsLocalProvider = { local },
+            defaultEngine = { if (local) ExecutionEngineChoice.LOCAL else ExecutionEngineChoice.REMOTE },
+            engineProvider = { _ -> com.rmobile.console.data.execution.RemoteExecutionEngine(RExecutionRepository(api)) },
         )
         advanceUntilIdle()
         assertFalse(vm.uiState.value.engineIsLocal)
@@ -254,5 +255,28 @@ class PackagesViewModelTest {
 
         assertTrue(vm.uiState.value.engineIsLocal)
         assertEquals(listOf("glue", "praise"), vm.uiState.value.installed)
+    }
+
+    @Test
+    fun `resolved engine follows the active project's own engine choice`() = runTest {
+        val localEngine = FakeEngine("local")
+        val remoteEngine = FakeEngine("remote")
+        val project = ProjectOps.newProject(id = 200, name = "Remote proj", now = 0, engine = ExecutionEngineChoice.REMOTE)
+        val projectStore = InMemoryProjectStore(initial = listOf(project), lastId = 200)
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(FakeApi()),
+            projectStore = projectStore,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { choice ->
+                when (choice) {
+                    ExecutionEngineChoice.LOCAL -> localEngine
+                    ExecutionEngineChoice.REMOTE -> remoteEngine
+                }
+            },
+        )
+        advanceUntilIdle()
+
+        assertFalse(vm.uiState.value.engineIsLocal)
+        assertEquals(listOf("remote-pkg"), vm.uiState.value.installed)
     }
 }

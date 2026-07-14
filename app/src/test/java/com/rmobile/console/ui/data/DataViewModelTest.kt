@@ -6,6 +6,7 @@ import com.rmobile.console.data.model.DataFile
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.project.ProjectStore
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -40,8 +41,11 @@ class DataViewModelTest {
 
     private fun upload(name: String, n: Int = 3) = DataUpload(name, n.toLong()) { ByteArrayInputStream(ByteArray(n)) }
 
-    private fun vm(store: FakeStore, projectStore: ProjectStore = InMemoryProjectStore(), local: Boolean = true) =
-        DataViewModel(dataStoreProvider = { store }, projectStore = projectStore, engineIsLocalProvider = { local })
+    private fun vm(
+        store: FakeStore,
+        projectStore: ProjectStore = InMemoryProjectStore(),
+        defaultEngine: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL,
+    ) = DataViewModel(defaultEngine = { defaultEngine }, dataStoreProvider = { _ -> store }, projectStore = projectStore)
 
     @Test fun `loads files on init`() = runTest {
         val vm = vm(FakeStore(listOf(DataFile("a.csv", 1), DataFile("b.csv", 2))))
@@ -76,7 +80,28 @@ class DataViewModelTest {
         assertTrue(vm.warnLargeFile(300L * 1024 * 1024))
     }
     @Test fun `no large-file warning on remote`() = runTest {
-        val vm = vm(FakeStore(), local = false); advanceUntilIdle()
+        val vm = vm(FakeStore(), defaultEngine = ExecutionEngineChoice.REMOTE); advanceUntilIdle()
         assertFalse(vm.warnLargeFile(300L * 1024 * 1024))
+    }
+
+    @Test fun `resolved store follows the active project's own engine choice`() = runTest {
+        val localStore = FakeStore(listOf(DataFile("local.csv", 1)))
+        val remoteStore = FakeStore(listOf(DataFile("remote.csv", 2)))
+        val project = ProjectOps.newProject(id = 9, name = "P", now = 0, engine = ExecutionEngineChoice.REMOTE)
+        val projectStore = InMemoryProjectStore(listOf(project), 9)
+        val vm = DataViewModel(
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            dataStoreProvider = { choice ->
+                when (choice) {
+                    ExecutionEngineChoice.LOCAL -> localStore
+                    ExecutionEngineChoice.REMOTE -> remoteStore
+                }
+            },
+            projectStore = projectStore,
+        )
+        advanceUntilIdle()
+
+        assertFalse(vm.uiState.value.engineIsLocal)
+        assertEquals(listOf("remote.csv"), vm.uiState.value.files.map { it.name })
     }
 }

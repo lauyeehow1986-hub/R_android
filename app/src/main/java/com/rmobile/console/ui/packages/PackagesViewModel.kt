@@ -20,15 +20,15 @@ import kotlinx.coroutines.launch
 class PackagesViewModel(
     private val repository: RExecutionRepository = RExecutionRepository(NetworkModule.rExecutionApi),
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
-    private val engineProvider: () -> ExecutionEngine = { ServiceLocator.currentExecutionEngine() },
-    private val engineIsLocalProvider: () -> Boolean =
-        { ServiceLocator.settingsStore.executionEngine == ExecutionEngineChoice.LOCAL },
+    private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
+    private val engineProvider: (ExecutionEngineChoice) -> ExecutionEngine = { ServiceLocator.engineFor(it) },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PackagesUiState())
     val uiState: StateFlow<PackagesUiState> = _uiState.asStateFlow()
 
     private var session: String = RExecutionRepository.DEFAULT_SESSION_ID
+    private var engineChoice: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL
 
     init {
         resolveContext()
@@ -46,7 +46,8 @@ class PackagesViewModel(
         val active = projects.firstOrNull { it.id == projectStore.loadLastOpenProjectId() }
             ?: projects.firstOrNull()
         session = active?.let { ProjectSession.of(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
-        _uiState.update { it.copy(projectName = active?.name ?: "", engineIsLocal = engineIsLocalProvider()) }
+        engineChoice = ExecutionEngineChoice.resolve(active?.engine, defaultEngine())
+        _uiState.update { it.copy(projectName = active?.name ?: "", engineIsLocal = engineChoice == ExecutionEngineChoice.LOCAL) }
     }
 
     /** Call when the Packages screen becomes visible: re-resolve engine/session and reload the list. */
@@ -62,7 +63,7 @@ class PackagesViewModel(
     /** Reloads the installed-package list; leaves it unchanged on failure. */
     fun refresh() {
         viewModelScope.launch {
-            engineProvider().listPackages(session).onSuccess { response ->
+            engineProvider(engineChoice).listPackages(session).onSuccess { response ->
                 _uiState.update { it.copy(installed = response.packages) }
             }
         }
@@ -74,7 +75,7 @@ class PackagesViewModel(
 
         _uiState.update { it.copy(installing = true, message = null, log = "", isError = false) }
         viewModelScope.launch {
-            engineProvider().install(InstallRequest(pkg, session))
+            engineProvider(engineChoice).install(InstallRequest(pkg, session))
                 .onSuccess { response ->
                     val log = listOf(response.stdout, response.stderr)
                         .filter { it.isNotBlank() }
@@ -105,7 +106,7 @@ class PackagesViewModel(
     /** Uninstalls a package from the shared library, then refreshes the list. */
     fun uninstall(packageName: String) {
         viewModelScope.launch {
-            engineProvider().uninstall(UninstallRequest(packageName, session))
+            engineProvider(engineChoice).uninstall(UninstallRequest(packageName, session))
                 .onSuccess { response ->
                     if (response.removed) {
                         _uiState.update { it.copy(isError = false, message = "Removed $packageName.") }

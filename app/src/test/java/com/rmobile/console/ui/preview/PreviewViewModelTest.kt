@@ -27,6 +27,7 @@ import com.rmobile.console.data.model.UploadResponse
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.project.ProjectStore
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -81,8 +82,10 @@ class PreviewViewModelTest {
     private fun vm(
         api: FakePreviewApi,
         store: ProjectStore = InMemoryProjectStore(),
+        defaultEngine: ExecutionEngineChoice = ExecutionEngineChoice.REMOTE,
     ) = PreviewViewModel(
-        engineProvider = { com.rmobile.console.data.execution.RemoteExecutionEngine(RExecutionRepository(api, NoopDataApi())) },
+        defaultEngine = { defaultEngine },
+        engineProvider = { _ -> com.rmobile.console.data.execution.RemoteExecutionEngine(RExecutionRepository(api, NoopDataApi())) },
         projectStore = store,
     )
 
@@ -126,5 +129,41 @@ class PreviewViewModelTest {
         vm(api, store).load("file", "a.csv")
         advanceUntilIdle()
         assertEquals("proj-42", api.lastRequest!!.sessionId)
+    }
+
+    private class FakeEngine : com.rmobile.console.data.execution.ExecutionEngine {
+        var lastRequest: PreviewRequest? = null
+        override suspend fun execute(request: ExecuteRequest) = Result.success(ExecuteResponse())
+        override suspend fun reset(sessionId: String, purgePackages: Boolean) = Result.success(Unit)
+        override suspend fun listPackages(sessionId: String) = Result.success(PackagesResponse())
+        override suspend fun install(request: InstallRequest) = Result.success(InstallResponse())
+        override suspend fun uninstall(request: UninstallRequest) = Result.success(UninstallResponse())
+        override suspend fun preview(request: PreviewRequest): Result<PreviewResponse> {
+            lastRequest = request
+            return Result.success(PreviewResponse(table = RTable(columns = listOf("x"), totalRows = 1)))
+        }
+    }
+
+    @Test
+    fun `resolved engine follows the active project's own engine choice`() = runTest {
+        val localEngine = FakeEngine()
+        val remoteEngine = FakeEngine()
+        val project = ProjectOps.newProject(id = 55, name = "P", now = 0, engine = ExecutionEngineChoice.REMOTE)
+        val store = InMemoryProjectStore(initial = listOf(project), lastId = 55)
+        val model = PreviewViewModel(
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { choice ->
+                when (choice) {
+                    ExecutionEngineChoice.LOCAL -> localEngine
+                    ExecutionEngineChoice.REMOTE -> remoteEngine
+                }
+            },
+            projectStore = store,
+        )
+        model.load("file", "a.csv")
+        advanceUntilIdle()
+
+        assertTrue(remoteEngine.lastRequest != null)
+        assertNull(localEngine.lastRequest)
     }
 }
