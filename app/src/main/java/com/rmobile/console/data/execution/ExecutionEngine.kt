@@ -18,8 +18,8 @@ import com.rmobile.console.data.model.UninstallResponse
  */
 interface ExecutionEngine {
     suspend fun execute(request: ExecuteRequest): Result<ExecuteResponse>
-    /** Clears the session's workspace. */
-    suspend fun reset(sessionId: String): Result<Unit>
+    /** Clears the session's workspace (and its package library when [purgePackages]). */
+    suspend fun reset(sessionId: String, purgePackages: Boolean = false): Result<Unit>
     suspend fun listPackages(sessionId: String): Result<PackagesResponse>
     suspend fun install(request: InstallRequest): Result<InstallResponse>
     suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse>
@@ -41,8 +41,8 @@ class RemoteExecutionEngine(
         }
     }
 
-    override suspend fun reset(sessionId: String): Result<Unit> =
-        repository.reset(sessionId).map { }
+    override suspend fun reset(sessionId: String, purgePackages: Boolean): Result<Unit> =
+        repository.reset(sessionId, purgePackages).map { }
 
     override suspend fun listPackages(sessionId: String): Result<PackagesResponse> =
         repository.listPackages(sessionId)

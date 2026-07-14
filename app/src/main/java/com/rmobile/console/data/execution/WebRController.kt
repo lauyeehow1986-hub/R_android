@@ -11,6 +11,9 @@ import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -22,12 +25,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * marshaled to the main thread. Android-bound: verified on-device, not by JVM tests.
  */
 @SuppressLint("SetJavaScriptEnabled")
-class WebRController(context: Context) {
+class WebRController(
+    context: Context,
+    private val swapPhaseSink: MutableStateFlow<SwapPhase> = MutableStateFlow(SwapPhase.IDLE),
+) {
 
     private val appContext = context.applicationContext
     private val ready = CompletableDeferred<Unit>()
     private val pending = ConcurrentHashMap<Int, CompletableDeferred<String>>()
     private val nextId = AtomicInteger(0)
+
+    /** Emits the current Local session-swap phase; IDLE when no swap is in progress. */
+    val swapProgress: StateFlow<SwapPhase> = swapPhaseSink.asStateFlow()
 
     // Cross-origin isolation is required for WebR's SharedArrayBuffer channel.
     private val coiHeaders = mapOf(
@@ -75,19 +84,12 @@ class WebRController(context: Context) {
     }
 
     // Persisted snapshots under filesDir, streamed to/from the WebR VFS in base64
-    // chunks (the bridge marshals strings), so a large payload doesn't hit a
-    // single-call size limit. Two kinds: the package library tarball and the
-    // workspace (save.image) blob. This deliberately avoids WebR's IDBFS FS.mount,
-    // which destabilised the eval channel.
-    private val libraryStore = SnapshotStore(java.io.File(appContext.filesDir, "webr-library.tar.gz"))
-    private val workspaceStore = SnapshotStore(java.io.File(appContext.filesDir, "webr-workspace.RData"))
-    private fun snapshotStore(kind: String) = when (kind) {
-        "workspace" -> workspaceStore
-        "library" -> libraryStore
-        // Fail loud on a typo'd kind rather than silently mis-routing one snapshot's
-        // bytes into the other file. The Bridge callers wrap this in try/catch, so a
-        // bad kind becomes a safe no-op (0/""/nothing) instead of cross-file corruption.
-        else -> error("Unknown snapshot kind: $kind")
+    // chunks. Now per (kind, session): each project's workspace + library is its own
+    // file, so switching projects swaps isolated state. Still avoids IDBFS FS.mount.
+    private val stores = ConcurrentHashMap<String, SnapshotStore>()
+    private fun snapshotStore(kind: String, sessionId: String): SnapshotStore {
+        val name = SnapshotNaming.fileName(kind, sessionId) // throws on unknown kind
+        return stores.getOrPut(name) { SnapshotStore(java.io.File(appContext.filesDir, name)) }
     }
 
     // On-device data files live at filesDir/localdata/<sanitized-session>/ (written
@@ -104,25 +106,29 @@ class WebRController(context: Context) {
         }
         @JavascriptInterface fun onResult(id: Int, json: String) { pending.remove(id)?.complete(json) }
 
-        @JavascriptInterface fun snapshotSize(kind: String): Int =
-            try { snapshotStore(kind).size() } catch (e: Exception) { 0 }
+        @JavascriptInterface fun snapshotSize(kind: String, sessionId: String): Int =
+            try { snapshotStore(kind, sessionId).size() } catch (e: Exception) { 0 }
 
-        @JavascriptInterface fun snapshotRead(kind: String, offset: Int, length: Int): String = try {
-            val buf = snapshotStore(kind).read(offset, length)
+        @JavascriptInterface fun snapshotRead(kind: String, sessionId: String, offset: Int, length: Int): String = try {
+            val buf = snapshotStore(kind, sessionId).read(offset, length)
             if (buf.isEmpty()) "" else android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
         } catch (e: Exception) { "" }
 
-        @JavascriptInterface fun snapshotBegin(kind: String) {
-            try { snapshotStore(kind).begin() } catch (e: Exception) {}
+        @JavascriptInterface fun snapshotBegin(kind: String, sessionId: String) {
+            try { snapshotStore(kind, sessionId).begin() } catch (e: Exception) {}
         }
-        @JavascriptInterface fun snapshotAppend(kind: String, b64: String) {
-            try { snapshotStore(kind).append(android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)) } catch (e: Exception) {}
+        @JavascriptInterface fun snapshotAppend(kind: String, sessionId: String, b64: String) {
+            try { snapshotStore(kind, sessionId).append(android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)) } catch (e: Exception) {}
         }
-        @JavascriptInterface fun snapshotCommit(kind: String) {
-            try { snapshotStore(kind).commit() } catch (e: Exception) {}
+        @JavascriptInterface fun snapshotCommit(kind: String, sessionId: String) {
+            try { snapshotStore(kind, sessionId).commit() } catch (e: Exception) {}
         }
-        @JavascriptInterface fun snapshotDelete(kind: String) {
-            try { snapshotStore(kind).delete() } catch (e: Exception) {}
+        @JavascriptInterface fun snapshotDelete(kind: String, sessionId: String) {
+            try { snapshotStore(kind, sessionId).delete() } catch (e: Exception) {}
+        }
+
+        @JavascriptInterface fun onSwapProgress(phase: String) {
+            swapPhaseSink.value = SwapPhase.fromName(phase)
         }
 
         @JavascriptInterface fun dataList(sessionId: String): String {
@@ -146,28 +152,28 @@ class WebRController(context: Context) {
     suspend fun execute(requestJson: String): String =
         callBridge("window.webrRun", org.json.JSONObject.quote(requestJson))
 
-    /** Clears the WebR global env and returns the bridge's reset JSON. */
-    suspend fun reset(): String = callBridge("window.webrReset", null)
+    /** Clears the given session's workspace (and its package library when [purgePackages]). */
+    suspend fun reset(sessionId: String, purgePackages: Boolean): String =
+        callBridge("window.webrReset", org.json.JSONObject.quote(sessionId), purgePackages.toString())
 
-    /** Installs a package from the bundled mini-repo and returns the bridge's InstallResponse JSON. */
-    suspend fun installPackage(pkg: String): String =
-        callBridge("window.webrInstall", org.json.JSONObject.quote(pkg))
+    suspend fun installPackage(pkg: String, sessionId: String): String =
+        callBridge("window.webrInstall", org.json.JSONObject.quote(pkg), org.json.JSONObject.quote(sessionId))
 
-    /** Removes an installed package and returns the bridge's UninstallResponse JSON. */
-    suspend fun uninstallPackage(pkg: String): String =
-        callBridge("window.webrUninstall", org.json.JSONObject.quote(pkg))
+    suspend fun uninstallPackage(pkg: String, sessionId: String): String =
+        callBridge("window.webrUninstall", org.json.JSONObject.quote(pkg), org.json.JSONObject.quote(sessionId))
 
-    /** Lists installed packages and returns the bridge's PackagesResponse JSON. */
-    suspend fun listPackages(): String = callBridge("window.webrListPackages", null)
+    suspend fun listPackages(sessionId: String): String =
+        callBridge("window.webrListPackages", org.json.JSONObject.quote(sessionId))
 
-    /** Runs a read-only preview of a data file/workspace object and returns the bridge's PreviewResponse JSON. */
-    suspend fun preview(requestJson: String): String = callBridge("window.webrPreview", org.json.JSONObject.quote(requestJson))
+    suspend fun preview(requestJson: String): String =
+        callBridge("window.webrPreview", org.json.JSONObject.quote(requestJson))
 
     /**
      * Invokes a bridge function that takes the result id as its first argument and
-     * (optionally) [jsArg] as its second, and awaits the JSON it posts back.
+     * [jsArgs] (already JS-literal-encoded) as the following arguments, and awaits the
+     * JSON it posts back.
      */
-    private suspend fun callBridge(fn: String, jsArg: String?): String {
+    private suspend fun callBridge(fn: String, vararg jsArgs: String): String {
         // Build the WebView (which starts loading the WebR page, and is what
         // eventually fires onReady) on the main thread BEFORE awaiting readiness —
         // otherwise `ready` can never complete and the first call deadlocks.
@@ -176,10 +182,9 @@ class WebRController(context: Context) {
         val id = nextId.incrementAndGet()
         val deferred = CompletableDeferred<String>()
         pending[id] = deferred
-        val call = if (jsArg != null) "$fn($id, $jsArg)" else "$fn($id)"
-        withContext(Dispatchers.Main) {
-            webView.evaluateJavascript(call, null)
-        }
+        val args = (listOf(id.toString()) + jsArgs).joinToString(", ")
+        val call = "$fn($args)"
+        withContext(Dispatchers.Main) { webView.evaluateJavascript(call, null) }
         return deferred.await()
     }
 }

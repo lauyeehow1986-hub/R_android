@@ -21,20 +21,22 @@ class LocalExecutionEngine(
         json.decodeFromString<ExecuteResponse>(controller.execute(requestJson))
     }
 
-    override suspend fun reset(sessionId: String): Result<Unit> = runCatching {
-        controller.reset(); Unit
+    override suspend fun reset(sessionId: String, purgePackages: Boolean): Result<Unit> = runCatching {
+        controller.reset(sessionId, purgePackages); Unit
     }
 
     override suspend fun listPackages(sessionId: String): Result<PackagesResponse> = runCatching {
-        json.decodeFromString<PackagesResponse>(controller.listPackages())
+        json.decodeFromString<PackagesResponse>(controller.listPackages(sessionId))
     }
 
     override suspend fun install(request: InstallRequest): Result<InstallResponse> = runCatching {
-        json.decodeFromString<InstallResponse>(controller.installPackage(request.packageName))
+        val session = request.sessionId ?: com.rmobile.console.data.RExecutionRepository.DEFAULT_SESSION_ID
+        json.decodeFromString<InstallResponse>(controller.installPackage(request.packageName, session))
     }
 
     override suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse> = runCatching {
-        json.decodeFromString<UninstallResponse>(controller.uninstallPackage(request.packageName))
+        val session = request.sessionId ?: com.rmobile.console.data.RExecutionRepository.DEFAULT_SESSION_ID
+        json.decodeFromString<UninstallResponse>(controller.uninstallPackage(request.packageName, session))
     }
 
     override suspend fun preview(request: PreviewRequest): Result<PreviewResponse> = runCatching {
