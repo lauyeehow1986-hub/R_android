@@ -18,6 +18,7 @@ let lastRestoreInfo = '';
 const WS_RDATA = '/rmobile/workspace.RData';
 const WS_MAX_BYTES = 200 * 1024 * 1024; // don't persist a workspace blob larger than this
 let pendingWorkspaceSnapshot = null;    // in-flight background save.image, awaited before the next run
+let runGeneration = 0;                  // bumped per run so a timed-out zombie run won't snapshot late
 let lastWorkspaceInfo = '';
 
 function bytesToB64(bytes) {
@@ -269,6 +270,10 @@ async function resetRunDir() {
 }
 
 async function runOnce(req) {
+  // Tag this run. A run that "timed out" (its Promise.race branch lost) is never
+  // cancelled and may still finish later; the tag lets it detect it is no longer the
+  // current run and skip snapshotting.
+  const myGen = ++runGeneration;
   // Never let a still-running background workspace snapshot overlap the next run
   // (both touch globalenv on the single WebR worker). Wait for it first.
   if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
@@ -316,9 +321,15 @@ async function runOnce(req) {
     const wsR = await webR.evalR('ls(globalenv())');
     const workspaceObjects = await wsR.toArray();
     webR.destroy(wsR);
-    // Persist the (possibly mutated) workspace without blocking the result. The
-    // guard at the top of runOnce awaits this before the next run starts.
-    pendingWorkspaceSnapshot = snapshotWorkspace().finally(() => { pendingWorkspaceSnapshot = null; });
+    // Persist the (possibly mutated) workspace without blocking the result — but only
+    // if this is still the current run (a timed-out zombie must not schedule a save).
+    // The guard at the top of the next runOnce awaits this before proceeding. The
+    // identity check stops a late finally from nulling a newer run's pending promise.
+    if (myGen === runGeneration) {
+      const snap = snapshotWorkspace();
+      pendingWorkspaceSnapshot = snap;
+      snap.finally(() => { if (pendingWorkspaceSnapshot === snap) pendingWorkspaceSnapshot = null; });
+    }
     return { stdout, stderr, plots, tables, workspaceObjects, error: null, timedOut: false };
   } finally { shelter.purge(); }
 }
@@ -343,6 +354,10 @@ window.webrRun = async (id, requestJson) => {
 
 window.webrReset = async (id) => {
   try {
+    // Wait out any in-flight background snapshot first: otherwise its already-read,
+    // pre-reset bytes get streamed to disk AFTER our snapshotDelete, resurrecting
+    // exactly what the reset is clearing.
+    if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
     await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())');
     AndroidBridge.snapshotDelete('workspace'); // a reset must not resurrect vars on next launch
     AndroidBridge.onResult(id, JSON.stringify({ ok: true }));
