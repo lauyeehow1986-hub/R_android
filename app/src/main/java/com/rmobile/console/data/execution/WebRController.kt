@@ -81,7 +81,14 @@ class WebRController(context: Context) {
     // which destabilised the eval channel.
     private val libraryStore = SnapshotStore(java.io.File(appContext.filesDir, "webr-library.tar.gz"))
     private val workspaceStore = SnapshotStore(java.io.File(appContext.filesDir, "webr-workspace.RData"))
-    private fun snapshotStore(kind: String) = if (kind == "workspace") workspaceStore else libraryStore
+    private fun snapshotStore(kind: String) = when (kind) {
+        "workspace" -> workspaceStore
+        "library" -> libraryStore
+        // Fail loud on a typo'd kind rather than silently mis-routing one snapshot's
+        // bytes into the other file. The Bridge callers wrap this in try/catch, so a
+        // bad kind becomes a safe no-op (0/""/nothing) instead of cross-file corruption.
+        else -> error("Unknown snapshot kind: $kind")
+    }
 
     // On-device data files live at filesDir/localdata/<sanitized-session>/ (written
     // by LocalSessionDataStore); the bridge pulls them into WebR on demand.
