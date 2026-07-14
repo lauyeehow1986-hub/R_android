@@ -23,6 +23,7 @@ import com.rmobile.console.data.project.ProjectSession
 import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptStore
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import com.rmobile.console.util.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -105,24 +106,30 @@ class EditorViewModelTest {
         history: InMemoryHistoryStore = InMemoryHistoryStore(),
         scripts: InMemoryScriptStore = InMemoryScriptStore(),
         projects: InMemoryProjectStore = InMemoryProjectStore(),
-        engineProvider: (() -> com.rmobile.console.data.execution.ExecutionEngine)? = null,
+        defaultEngine: () -> ExecutionEngineChoice = { ExecutionEngineChoice.LOCAL },
+        engineProvider: ((ExecutionEngineChoice) -> com.rmobile.console.data.execution.ExecutionEngine)? = null,
     ): EditorViewModel {
         val repo = RExecutionRepository(api)
         return EditorViewModel(
             repo, history, scripts, projects, now = { counter++ },
+            defaultEngine = defaultEngine,
             engineProvider = engineProvider
-                ?: { com.rmobile.console.data.execution.RemoteExecutionEngine(repo) },
+                ?: { _ -> com.rmobile.console.data.execution.RemoteExecutionEngine(repo) },
         )
     }
 
     private class FakeEngine(val response: com.rmobile.console.data.model.ExecuteResponse) :
         com.rmobile.console.data.execution.ExecutionEngine {
         var lastRequest: com.rmobile.console.data.model.ExecuteRequest? = null
+        var lastReset: Pair<String, Boolean>? = null
         override suspend fun execute(request: com.rmobile.console.data.model.ExecuteRequest):
             Result<com.rmobile.console.data.model.ExecuteResponse> {
             lastRequest = request; return Result.success(response)
         }
-        override suspend fun reset(sessionId: String) = Result.success(Unit)
+        override suspend fun reset(sessionId: String, purgePackages: Boolean): Result<Unit> {
+            lastReset = sessionId to purgePackages
+            return Result.success(Unit)
+        }
         override suspend fun listPackages(sessionId: String) = Result.success(com.rmobile.console.data.model.PackagesResponse())
         override suspend fun install(request: com.rmobile.console.data.model.InstallRequest) = Result.success(com.rmobile.console.data.model.InstallResponse())
         override suspend fun uninstall(request: com.rmobile.console.data.model.UninstallRequest) = Result.success(com.rmobile.console.data.model.UninstallResponse())
@@ -132,7 +139,7 @@ class EditorViewModelTest {
     @Test
     fun `runCode routes through the selected engine and maps its response`() = runTest {
         val engine = FakeEngine(ExecuteResponse(stdout = "hi", workspaceObjects = listOf("y")))
-        val vm = viewModel(engineProvider = { engine })
+        val vm = viewModel(engineProvider = { _ -> engine })
         vm.onCodeChanged("y <- 1")
         vm.runCode()
         advanceUntilIdle()
@@ -316,6 +323,71 @@ class EditorViewModelTest {
         val reset = api.lastReset!!
         assertEquals(victimSession, reset.sessionId)
         assertTrue(reset.purgePackages)
+    }
+
+    @Test
+    fun `runCode resolves the active project engine`() = runTest {
+        val localEngine = FakeEngine(ExecuteResponse(stdout = "local"))
+        val remoteEngine = FakeEngine(ExecuteResponse(stdout = "remote"))
+        val vm = viewModel(
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { choice ->
+                when (choice) {
+                    ExecutionEngineChoice.LOCAL -> localEngine
+                    ExecutionEngineChoice.REMOTE -> remoteEngine
+                }
+            },
+        )
+        vm.setProjectEngine(ExecutionEngineChoice.REMOTE)
+        vm.onCodeChanged("cat(1)")
+        vm.runCode()
+        advanceUntilIdle()
+
+        assertTrue(remoteEngine.lastRequest != null)
+        assertEquals(null, localEngine.lastRequest)
+    }
+
+    @Test
+    fun `new project is stamped with the settings default engine`() {
+        val vm = viewModel(defaultEngine = { ExecutionEngineChoice.REMOTE })
+        vm.newProject("Fresh")
+        assertEquals(ExecutionEngineChoice.REMOTE, vm.uiState.value.project.engine)
+    }
+
+    @Test
+    fun `setProjectEngine persists the choice on the active project`() {
+        val projects = InMemoryProjectStore()
+        val vm = viewModel(projects = projects)
+        vm.setProjectEngine(ExecutionEngineChoice.REMOTE)
+
+        assertEquals(ExecutionEngineChoice.REMOTE, vm.uiState.value.project.engine)
+        val persisted = projects.stored.first { it.id == vm.uiState.value.project.id }
+        assertEquals(ExecutionEngineChoice.REMOTE, persisted.engine)
+    }
+
+    @Test
+    fun `deleteProject resets via the victim project's engine`() = runTest {
+        val localEngine = FakeEngine(ExecuteResponse(stdout = "local"))
+        val remoteEngine = FakeEngine(ExecuteResponse(stdout = "remote"))
+        val vm = viewModel(
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { choice ->
+                when (choice) {
+                    ExecutionEngineChoice.LOCAL -> localEngine
+                    ExecutionEngineChoice.REMOTE -> remoteEngine
+                }
+            },
+        )
+        vm.newProject("Second")
+        vm.setProjectEngine(ExecutionEngineChoice.REMOTE)
+        val victim = vm.uiState.value.project
+        val victimSession = ProjectSession.of(victim)
+
+        vm.deleteProject(victim.id)
+        advanceUntilIdle()
+
+        assertEquals(victimSession to true, remoteEngine.lastReset)
+        assertEquals(null, localEngine.lastReset)
     }
 
     @Test

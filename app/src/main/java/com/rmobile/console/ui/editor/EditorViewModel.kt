@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.ServiceLocator
 import com.rmobile.console.data.execution.ExecutionEngine
+import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
 import com.rmobile.console.data.history.RunHistory
@@ -19,6 +20,7 @@ import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.scripts.SavedScriptLibrary
 import com.rmobile.console.data.scripts.SavedScriptStore
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import com.rmobile.console.ui.editor.completion.BaseRSymbols
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,7 +34,9 @@ class EditorViewModel(
     private val scriptStore: SavedScriptStore = ServiceLocator.settingsStore,
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
     private val now: () -> Long = System::currentTimeMillis,
-    private val engineProvider: () -> ExecutionEngine = { ServiceLocator.currentExecutionEngine() },
+    private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
+    private val engineProvider: (ExecutionEngineChoice) -> ExecutionEngine = { ServiceLocator.engineFor(it) },
+    private val swapProgress: StateFlow<SwapPhase> = ServiceLocator.swapProgress,
 ) : ViewModel() {
 
     private val _uiState: MutableStateFlow<EditorUiState>
@@ -44,7 +48,7 @@ class EditorViewModel(
 
     init {
         val loaded = projectStore.loadProjects()
-        val projects = loaded.ifEmpty { listOf(ProjectOps.newProject(now(), "Untitled", now())) }
+        val projects = loaded.ifEmpty { listOf(ProjectOps.newProject(now(), "Untitled", now(), engine = defaultEngine())) }
         if (loaded.isEmpty()) projectStore.persistProjects(projects)
         val lastId = projectStore.loadLastOpenProjectId()
         val current = projects.firstOrNull { it.id == lastId } ?: projects.first()
@@ -58,8 +62,12 @@ class EditorViewModel(
             ),
         )
         uiState = _uiState.asStateFlow()
+        viewModelScope.launch { swapProgress.collect { phase -> _uiState.update { it.copy(swapPhase = phase) } } }
         refreshSymbols()
     }
+
+    private fun engineFor(project: Project): ExecutionEngine =
+        engineProvider(ExecutionEngineChoice.resolve(project.engine, defaultEngine()))
 
     // --- editing ---
 
@@ -131,7 +139,7 @@ class EditorViewModel(
     }
 
     fun newProject(name: String) {
-        val created = ProjectOps.newProject(now(), name.trim().ifEmpty { "Untitled" }, now())
+        val created = ProjectOps.newProject(now(), name.trim().ifEmpty { "Untitled" }, now(), engine = defaultEngine())
         val updated = ProjectOps.upsert(_uiState.value.projects, created)
         projectStore.persistProjects(updated)
         projectStore.persistLastOpenProjectId(created.id)
@@ -156,11 +164,11 @@ class EditorViewModel(
 
     fun deleteProject(id: Long) {
         _uiState.value.projects.firstOrNull { it.id == id }?.let { victim ->
-            viewModelScope.launch { repository.reset(ProjectSession.of(victim), purgePackages = true) }
+            viewModelScope.launch { engineFor(victim).reset(ProjectSession.of(victim), purgePackages = true) }
         }
         val wasActive = _uiState.value.project.id == id
         var remaining = ProjectOps.delete(_uiState.value.projects, id)
-        if (remaining.isEmpty()) remaining = listOf(ProjectOps.newProject(now(), "Untitled", now()))
+        if (remaining.isEmpty()) remaining = listOf(ProjectOps.newProject(now(), "Untitled", now(), engine = defaultEngine()))
         projectStore.persistProjects(remaining)
         _uiState.update { state ->
             if (state.project.id == id) {
@@ -194,6 +202,13 @@ class EditorViewModel(
             )
         }
         onActiveProjectChanged()
+    }
+
+    /** Sets the active project's own engine choice (overriding the app-wide default for it). */
+    fun setProjectEngine(choice: ExecutionEngineChoice) {
+        val updated = _uiState.value.project.copy(engine = choice, updatedAt = now())
+        persistProject(updated)
+        _uiState.update { it.copy(project = updated) }
     }
 
     private fun persistProject(project: Project) {
@@ -236,7 +251,7 @@ class EditorViewModel(
     fun resetSession() {
         val session = ProjectSession.of(_uiState.value.project)
         viewModelScope.launch {
-            engineProvider().reset(session)
+            engineFor(_uiState.value.project).reset(session)
                 .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
                 .onFailure { t -> _uiState.update { it.copy(errorMessage = t.message ?: "Failed to reset the session.") } }
         }
@@ -256,7 +271,7 @@ class EditorViewModel(
         val session = ProjectSession.of(project)
         viewModelScope.launch {
             val request = ExecuteRequest(sessionId = session, files = files, entryFile = project.entryFileName)
-            engineProvider().execute(request)
+            engineFor(project).execute(request)
                 .onSuccess { response ->
                     _uiState.update {
                         it.copy(

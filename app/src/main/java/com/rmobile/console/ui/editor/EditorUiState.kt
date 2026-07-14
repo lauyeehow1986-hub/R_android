@@ -1,5 +1,6 @@
 package com.rmobile.console.ui.editor
 
+import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectOps
@@ -24,4 +25,5 @@ data class EditorUiState(
     val workspaceObjects: List<String> = emptyList(),
     val completionSymbols: List<String> = emptyList(),
     val help: HelpState? = null,
+    val swapPhase: SwapPhase = SwapPhase.IDLE,
 )
