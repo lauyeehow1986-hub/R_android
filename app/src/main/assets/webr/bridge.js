@@ -229,6 +229,14 @@ async function runOnce(req) {
       const note = `Note: ${skippedData.join(', ')} ${s ? 'are' : 'is'} too large for the on-device (Local) engine and ${s ? 'were' : 'was'} not loaded. Switch to the Remote engine in Settings to read ${s ? 'them' : 'it'} in code.`;
       stderr = stderr ? `${note}\n${stderr}` : note;
     }
+    // TEMP DIAG: show VFS state so we can see why a bare-name read failed.
+    try {
+      const dR = await webR.evalR(`paste(list.files(${JSON.stringify('/rmobile/data/' + req.sessionId)}), collapse=',')`);
+      const dfiles = (await dR.toArray())[0]; webR.destroy(dR);
+      const rR = await webR.evalR(`paste(list.files('/rmobile/run'), collapse=',')`);
+      const rfiles = (await rR.toArray())[0]; webR.destroy(rR);
+      stderr = `DIAG session=${req.sessionId} data=[${dfiles}] run=[${rfiles}] skipped=[${skippedData.join(',')}]\n` + stderr;
+    } catch (e) { stderr = `DIAG err ${String(e)}\n` + stderr; }
     const plots = [];
     for (const img of cap.images || []) plots.push(await bitmapToPng(img));
     const tables = await readTables();
