@@ -83,6 +83,31 @@ bundled repo is searched first and the network is the fallback.
   `webr/*.R` to LF: a CRLF checkout otherwise leaves a stray `\r` after `local({`
   that WebR's R parser rejects, breaking every run.
 
+## Session data files (`/rmobile/data`)
+
+The Local engine can read uploaded data files. They're stored on-device by
+`LocalSessionDataStore` under `filesDir/localdata/<session>/`; `bridge.js` mirrors
+them into WebR's in-memory FS on demand:
+
+- `WebRController` exposes them to JS via `AndroidBridge.dataList(session)` and
+  `dataChunk(session, name, offset, length)` (base64, chunked — like the library
+  snapshot).
+- `syncData(session)` mirrors the session's files into `/rmobile/data/<session>`,
+  pulling only new/size-changed files and dropping deleted ones (a no-op once the
+  VFS already matches, so ordinary runs stay fast; after an app restart the VFS is
+  empty and the next run re-pulls).
+- `runOnce` calls `syncData` after `resetRunDir`, then — after writing the run's
+  own files — `linkData(session)` symlinks each data file into `/rmobile/run` so
+  `read.csv("x.csv")` resolves by bare name. Linking after the run files means a
+  same-named run file shadows a data file. **If `file.symlink` isn't supported by
+  this WebR build, switch `linkData` to `file.copy`.**
+- `window.webrPreview(id, requestJson)` renders a file (by extension) or a
+  workspace object as one `RTable` (read-only), for the on-device data viewer. A
+  preview is a peek: for `.csv`/`.tsv` it pulls only an **8 MB prefix** of the file
+  into the VFS and reads the first 201 rows (`nrows = 201L`), so a large CSV
+  previews on-device without loading it all into memory; `.rds` still needs a full
+  sync (and shows the "too large for on-device" message if it doesn't fit).
+
 ## License
 
 WebR is distributed under the **GPL** (GNU General Public License) — the same

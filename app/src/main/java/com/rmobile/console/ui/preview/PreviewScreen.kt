@@ -1,6 +1,7 @@
 package com.rmobile.console.ui.preview
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -51,7 +52,17 @@ fun PreviewScreen(
             when {
                 state.isLoading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 state.error != null -> Text(state.error!!, color = MaterialTheme.colorScheme.error)
-                state.table != null -> RTableView(state.table!!, Modifier.fillMaxSize())
+                state.table != null -> Column(Modifier.fillMaxSize()) {
+                    if (state.truncated) {
+                        Text(
+                            "Showing the first ${state.table!!.rows.size} rows of a larger file.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                    }
+                    RTableView(state.table!!, Modifier.fillMaxSize())
+                }
                 else -> Text("Nothing to preview.")
             }
         }

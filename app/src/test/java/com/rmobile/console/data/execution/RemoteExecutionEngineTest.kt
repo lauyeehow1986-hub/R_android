@@ -18,6 +18,7 @@ class RemoteExecutionEngineTest {
         var lastInstall: com.rmobile.console.data.model.InstallRequest? = null
         var lastUninstall: com.rmobile.console.data.model.UninstallRequest? = null
         var lastPackagesSessionId: String? = null
+        var lastPreview: com.rmobile.console.data.model.PreviewRequest? = null
         override suspend fun execute(request: ExecuteRequest): ExecuteResponse {
             lastRequest = request
             return ExecuteResponse(stdout = "ok", workspaceObjects = listOf("x"))
@@ -38,7 +39,10 @@ class RemoteExecutionEngineTest {
         override suspend fun importLegacy(request: com.rmobile.console.data.model.ImportLegacyRequest) = com.rmobile.console.data.model.ImportLegacyResponse()
         override suspend fun symbols(sessionId: String) = com.rmobile.console.data.model.SymbolsResponse()
         override suspend fun help(request: com.rmobile.console.data.model.HelpRequest) = com.rmobile.console.data.model.HelpResponse()
-        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) = com.rmobile.console.data.model.PreviewResponse()
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest): com.rmobile.console.data.model.PreviewResponse {
+            lastPreview = request
+            return com.rmobile.console.data.model.PreviewResponse(truncated = true)
+        }
     }
 
     @Test
@@ -88,5 +92,15 @@ class RemoteExecutionEngineTest {
         val result = engine.listPackages("proj-2")
         assertEquals("proj-2", api.lastPackagesSessionId)
         assertEquals(listOf("glue"), result.getOrNull()!!.packages)
+    }
+
+    @Test
+    fun `preview forwards the request to the repository`() = runTest {
+        val api = RecordingApi()
+        val engine = RemoteExecutionEngine(RExecutionRepository(api))
+        val result = engine.preview(com.rmobile.console.data.model.PreviewRequest("file", "a.csv", "proj-2"))
+        assertEquals("a.csv", api.lastPreview!!.name)
+        assertEquals("proj-2", api.lastPreview!!.sessionId)
+        assertTrue(result.getOrNull()!!.truncated)
     }
 }

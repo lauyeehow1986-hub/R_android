@@ -339,7 +339,18 @@ read-only** — it never calls `save.image()` or otherwise mutates session
 state — and `table` is a single object, not an array (`/execute`'s `tables` is
 a list; a preview only ever shows one thing). The backend implementation
 reuses the shared `TABLE_EMIT_HELPERS` R source (factored out of `/execute`'s
-handler) so both endpoints emit byte-identical `table*.json`. File preview
+handler) so both endpoints emit byte-identical `table*.json`. A preview is a
+**peek**: for `.csv`/`.tsv` it reads only the first `R_TABLE_MAX_ROWS + 1` rows
+(via `read.csv(nrows=)`), so a multi-hundred-MB file doesn't get fully parsed
+into memory (that OOM-killed the subprocess before this) — the on-device
+`webrPreview` goes further and syncs only an **8 MB prefix** of a large CSV/TSV
+into the VFS (not the whole file, which its in-memory VFS can't hold) before the
+same `nrows = 201L` read, so a large CSV previews on-device too. Because a capped
+read can't know
+the true total, when there are more rows than the cap the handler trims to the
+cap and sets `truncated = TRUE` (via a `truncated.flag` marker); `table.totalRows`
+is then the **displayed** count, not the true total, and `PreviewScreen` shows a
+"Showing the first N rows" note. File preview
 (`source: "file"`) reads a session data file by extension — base R for
 `.csv`/`.tsv`/`.rds`, `readxl`/`arrow` for `.xlsx`/`.parquet` when those
 packages are installed in the session's library, else a friendly install-it
@@ -428,15 +439,23 @@ it's written back and `utils::untar(..., tar = "internal")`'d before ready
 (`tar="internal"` is required — the default untar shells out via `system()`, which
 Emscripten forbids). `bridge.js` also **strips CR from harness.R** on load: a CRLF
 (Windows autocrlf) checkout otherwise leaves a stray `\r` after `local({` that WebR's
-R parser rejects (`.gitattributes` also pins `webr/*.R` to LF). **v1 boundaries
-(deliberate, not built yet)** — the local **workspace** (variables) is still
-in-process (resets on app restart), there's **no data-import** (uploaded files aren't
-visible to local runs), and **engine choice is app-wide, not per-project**. The Data
-screen carries a note that it applies to the Remote engine; the Packages screen adapts
-its caption to the active engine and hides the legacy-import action on Local. These
-are documented fast-follows.
+R parser rejects (`.gitattributes` also pins `webr/*.R` to LF). The Local engine also
+supports **data import** — data ops route through a `SessionDataStore` abstraction
+(`data/datafiles/`: Remote delegates to the backend `/upload`/`/data`/`/delete-data`;
+Local = `LocalSessionDataStore`, on-device storage under `filesDir/localdata/<session>/`),
+chosen by `ServiceLocator.currentSessionDataStore()`. On-device files are made readable
+by bare name via a **lazy VFS sync**: `bridge.js` `syncData()` mirrors a session's files
+into `/rmobile/data/<session>` (chunked base64 via `WebRController` `dataList`/`dataChunk`,
+pulling only new/changed), and `linkData()` symlinks them into each run's cwd (`copy`
+fallback if WASM symlinks misbehave) — synced after `resetRunDir`, linked after the run's
+own files so those shadow same-named data files. **Preview** is engine-routed too (added to
+`ExecutionEngine`; Local = `bridge.js` `webrPreview`, which reads a file/object and emits an
+`RTable`). **v1 boundaries (deliberate, not built yet)** — the local **workspace**
+(variables) is still in-process (resets on app restart), and **engine choice is app-wide,
+not per-project**. The Data/Packages screens adapt their caption to the active engine
+(the Data screen also warns above 200 MB on Local, since its FS is in-memory). These are
+documented fast-follows.
 
 Still **not** built — don't assume these exist: cross-restart persistence of the
-local *workspace* (variables), local-engine data-import, per-project engine choice,
-and (backend) network-egress restriction in the dev profile or per-request VM
-isolation.
+local *workspace* (variables), per-project engine choice, and (backend)
+network-egress restriction in the dev profile or per-request VM isolation.

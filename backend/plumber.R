@@ -300,7 +300,17 @@ function(req, res) {
     stderr = result$stderr,
     plots = plots,
     tables = tables,
-    error = if (result$status != 0) sprintf("R exited with status %d.", result$status) else NULL,
+    # A negative status (or >=128) means the process was killed by a signal — on
+    # this hardened, memory-capped container that's almost always the OOM killer
+    # (e.g. read.csv on a multi-hundred-MB file), not a code error. Say so plainly
+    # instead of the cryptic "exited with status -9".
+    error = if (result$status != 0) {
+      if (isTRUE(result$status < 0) || isTRUE(result$status >= 128)) {
+        "The run was terminated before finishing — most likely it ran out of memory (e.g. reading a very large file). Try a smaller dataset, read it in chunks, or give the backend more memory."
+      } else {
+        sprintf("R exited with status %d.", result$status)
+      }
+    } else NULL,
     timedOut = FALSE,
     workspaceObjects = workspace_objects
   )
@@ -573,12 +583,17 @@ function(req, res) {
     if (!file.exists(src)) {
       return(list(table = NULL, error = "No such data file.", truncated = FALSE))
     }
+    # Read only enough rows for the preview (cap + 1, to detect "there's more").
+    # A preview is a peek — reading a whole multi-hundred-MB CSV just to show 200
+    # rows OOM-kills the subprocess. nrows keeps it bounded. (rds/xlsx/parquet load
+    # fully; there's no partial read for those, but they're the less common case.)
+    preview_read_rows <- TABLE_MAX_ROWS + 1L
     read_lines <- c(
       sprintf('fname <- %s', shQuote(name)),
       'ext <- tolower(tools::file_ext(fname))',
       'need <- function(pkg) if (!requireNamespace(pkg, quietly = TRUE)) stop(sprintf("Install \'%s\' in this project to preview .%s files.", pkg, ext))',
-      '.df <- if (ext == "csv") utils::read.csv(fname, check.names = FALSE)',
-      '  else if (ext %in% c("tsv", "tab")) utils::read.delim(fname, check.names = FALSE)',
+      sprintf('.df <- if (ext == "csv") utils::read.csv(fname, check.names = FALSE, nrows = %dL)', preview_read_rows),
+      sprintf('  else if (ext %%in%% c("tsv", "tab")) utils::read.delim(fname, check.names = FALSE, nrows = %dL)', preview_read_rows),
       '  else if (ext == "rds") readRDS(fname)',
       '  else if (ext %in% c("xlsx", "xls")) { need("readxl"); as.data.frame(readxl::read_excel(fname)) }',
       '  else if (ext == "parquet") { need("arrow"); as.data.frame(arrow::read_parquet(fname)) }',
@@ -599,6 +614,9 @@ function(req, res) {
     read_lines,
     TABLE_EMIT_HELPERS,
     'if (!.tabular(.df)) stop("Not a table.")',
+    # If more rows exist than we show, note it and trim, so the emitted totalRows
+    # is the displayed count (no misleading exact total for a capped read).
+    'if (is.data.frame(.df) && nrow(.df) > .maxrows) { writeLines("1", "truncated.flag"); .df <- utils::head(.df, .maxrows) }',
     '.emit(.df)',
     sprintf('}, error = function(e) writeLines(conditionMessage(e), %s)))', shQuote(err_path))
   )
@@ -638,7 +656,8 @@ function(req, res) {
 
   tbl <- jsonlite::fromJSON(table_file, simplifyVector = FALSE)
   total <- tryCatch(as.integer(tbl$totalRows), error = function(e) NA_integer_)
-  list(table = tbl, error = NULL, truncated = isTRUE(total > TABLE_MAX_ROWS))
+  truncated <- file.exists(file.path(run_dir, "truncated.flag"))
+  list(table = tbl, error = NULL, truncated = isTRUE(truncated) || isTRUE(total > TABLE_MAX_ROWS))
 }
 
 #* Upload a data file into a session's data dir (multipart/form-data, part "file").

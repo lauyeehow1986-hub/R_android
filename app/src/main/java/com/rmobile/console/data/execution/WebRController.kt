@@ -5,6 +5,7 @@ import android.content.Context
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
@@ -45,6 +46,11 @@ class WebRController(context: Context) {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
+            // All assets are bundled and served locally by WebViewAssetLoader, so
+            // there's nothing to gain from HTTP caching — and LOAD_DEFAULT lets the
+            // WebView serve a stale bridge.js/harness.R from its on-disk cache across
+            // update installs (which keep app data), silently masking asset changes.
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
             addJavascriptInterface(Bridge(), "AndroidBridge")
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
@@ -74,6 +80,13 @@ class WebRController(context: Context) {
     // avoids WebR's IDBFS FS.mount, which destabilised the eval channel.
     private val snapshotFile get() = java.io.File(appContext.filesDir, "webr-library.tar.gz")
     private val snapshotTmp get() = java.io.File(appContext.filesDir, "webr-library.tar.gz.tmp")
+
+    // On-device data files live at filesDir/localdata/<sanitized-session>/ (written
+    // by LocalSessionDataStore); the bridge pulls them into WebR on demand.
+    private fun localDataDir(sessionId: String): java.io.File {
+        val safe = sessionId.filter { it.isLetterOrDigit() || it == '_' || it == '-' }.ifBlank { "default" }
+        return java.io.File(java.io.File(appContext.filesDir, "localdata"), safe)
+    }
 
     private inner class Bridge {
         @JavascriptInterface fun onReady() { ready.complete(Unit) }
@@ -107,6 +120,22 @@ class WebRController(context: Context) {
         @JavascriptInterface fun snapshotCommit() {
             try { if (snapshotTmp.exists()) { snapshotFile.delete(); snapshotTmp.renameTo(snapshotFile) } } catch (e: Exception) {}
         }
+
+        @JavascriptInterface fun dataList(sessionId: String): String {
+            val files = (localDataDir(sessionId).listFiles() ?: emptyArray()).filter { it.isFile }
+            return org.json.JSONArray().apply {
+                files.forEach { put(org.json.JSONObject().put("name", it.name).put("size", it.length())) }
+            }.toString()
+        }
+        @JavascriptInterface fun dataChunk(sessionId: String, name: String, offset: Int, length: Int): String = try {
+            val f = java.io.File(localDataDir(sessionId), name)
+            if (!f.exists() || offset >= f.length()) "" else {
+                val end = minOf(offset + length, f.length().toInt())
+                val buf = ByteArray(end - offset)
+                java.io.RandomAccessFile(f, "r").use { it.seek(offset.toLong()); it.readFully(buf) }
+                android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
+            }
+        } catch (e: Exception) { "" }
     }
 
     /** Runs a full ExecuteRequest (as JSON) and returns the bridge's ExecuteResponse JSON. */
@@ -126,6 +155,9 @@ class WebRController(context: Context) {
 
     /** Lists installed packages and returns the bridge's PackagesResponse JSON. */
     suspend fun listPackages(): String = callBridge("window.webrListPackages", null)
+
+    /** Runs a read-only preview of a data file/workspace object and returns the bridge's PreviewResponse JSON. */
+    suspend fun preview(requestJson: String): String = callBridge("window.webrPreview", org.json.JSONObject.quote(requestJson))
 
     /**
      * Invokes a bridge function that takes the result id as its first argument and

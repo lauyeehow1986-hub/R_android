@@ -8,4 +8,5 @@ data class DataUiState(
     val isLoading: Boolean = false,
     val uploading: Boolean = false,
     val error: String? = null,
+    val engineIsLocal: Boolean = false,
 )

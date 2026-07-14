@@ -121,9 +121,11 @@ bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
   packages** too — core tidyverse/easystats packages install fully offline from a
   bundled repo, and anything else downloads on demand; the on-device library
   **persists across app restarts** (snapshotted to the app's private storage).
-  *v1 limits:* the Local engine can't see uploaded data files, and its workspace
-  (variables) resets when the app restarts — data import applies to the Remote
-  engine.
+  It can also **import data** — upload files on-device, read them in code by name
+  (`read.csv("x.csv")`), and preview them as tables (files stored in the app's
+  private storage; up to 1 GB, though large files may exhaust the on-device
+  engine's memory). *v1 limits:* the Local engine's workspace (variables) resets
+  when the app restarts.
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
 - **R syntax highlighting** and a **quick-insert bar** for common operators
   (`<-`, `|>`, `%>%`, `()`, …).
@@ -161,7 +163,7 @@ bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
 Not built yet: cross-restart persistence of the local *workspace* (variables),
-local-engine data import, per-project engine choice, iOS-app feature parity.
+per-project engine choice, iOS-app feature parity.
 
 ## Development
 

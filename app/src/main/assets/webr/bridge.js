@@ -92,6 +92,70 @@ async function restoreLibrary() {
   } catch (e) { lastRestoreInfo = 'restore failed: ' + String(e); }
 }
 
+const DATA_CHUNK = 512 * 1024;
+
+// Lazily mirror the session's on-device data files into /rmobile/data/<session>
+// (persists for the app process), pulling only new/changed files and dropping
+// deleted ones. Chunked base64 transfer, like the library snapshot.
+// Returns the names of files that couldn't be synced (too large for the in-memory
+// VFS), so the caller can tell the user why a bare-name read failed.
+async function syncData(sessionId) {
+  const skipped = [];
+  const dir = `/rmobile/data/${sessionId}`;
+  await webR.evalRVoid(`dir.create(${JSON.stringify(dir)}, showWarnings = FALSE, recursive = TRUE)`);
+  let wanted;
+  try { wanted = JSON.parse(AndroidBridge.dataList(sessionId)); } catch (e) { return skipped; }
+  const wantedNames = new Set(wanted.map((f) => f.name));
+  const haveR = await webR.evalR(`list.files(${JSON.stringify(dir)})`);
+  const have = await haveR.toArray(); webR.destroy(haveR);
+  for (const name of have) if (!wantedNames.has(name)) {
+    await webR.evalRVoid(`unlink(file.path(${JSON.stringify(dir)}, ${JSON.stringify(name)}))`);
+  }
+  for (const f of wanted) {
+    const path = `${dir}/${f.name}`;
+    let size = -1;
+    try {
+      const sz = await webR.evalR(`if (file.exists(${JSON.stringify(path)})) file.info(${JSON.stringify(path)})$size else -1`);
+      size = (await sz.toArray())[0]; webR.destroy(sz);
+    } catch (e) {}
+    if (size === f.size) continue;
+    // Stream chunks into ONE pre-allocated buffer (not an array of chunks + a second
+    // joined buffer), so peak memory is ~fileSize, not ~2x. The whole file still has
+    // to fit in the in-memory VFS, so a too-large file throws (RangeError on the
+    // allocation, or an OOM on write). Catch it: skip that one file so other files
+    // still sync and ordinary runs keep working — it just isn't readable on-device
+    // (the Remote engine handles large data). Without this, one big file would break
+    // every run/preview in the session.
+    try {
+      const all = new Uint8Array(f.size);
+      let o = 0;
+      for (let off = 0; off < f.size; off += DATA_CHUNK) {
+        const b64 = AndroidBridge.dataChunk(sessionId, f.name, off, DATA_CHUNK);
+        if (!b64) break;
+        const chunk = b64ToBytes(b64);
+        all.set(chunk, o);
+        o += chunk.length;
+      }
+      await webR.FS.writeFile(path, all);
+    } catch (e) {
+      try { await webR.evalRVoid(`unlink(${JSON.stringify(path)})`); } catch (e2) {}
+      skipped.push(f.name);
+    }
+  }
+  return skipped;
+}
+
+// Make the session's data files readable by bare name from the run cwd. Called
+// AFTER the run's own files are written, and file.symlink fails (silently) if the
+// link name already exists, so a same-named run file shadows a data file.
+async function linkData(sessionId) {
+  const dir = `/rmobile/data/${sessionId}`;
+  await webR.evalRVoid(
+    `local({ d <- ${JSON.stringify(dir)}; if (dir.exists(d)) for (f in list.files(d, full.names = TRUE)) ` +
+    `try(file.symlink(f, file.path("/rmobile/run", basename(f))), silent = TRUE) })`
+  );
+}
+
 async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
@@ -124,18 +188,30 @@ async function readTables() {
   return tables;
 }
 
+// Prepend a clear explanation when a run couldn't load a too-large data file
+// (skipped by syncData), so R's cryptic "cannot open the connection" is legible.
+function withSkippedNote(stderr, skipped) {
+  if (!skipped || !skipped.length) return stderr;
+  const s = skipped.length > 1;
+  const note = `Note: ${skipped.join(', ')} ${s ? 'are' : 'is'} too large for the on-device (Local) engine and ${s ? 'were' : 'was'} not loaded. Switch to the Remote engine in Settings to read ${s ? 'them' : 'it'} in code.`;
+  return stderr ? `${note}\n${stderr}` : note;
+}
+
 async function resetRunDir() {
   await webR.evalRVoid('unlink("/rmobile/run", recursive = TRUE); dir.create("/rmobile/run"); setwd("/rmobile/run")');
 }
 
 async function runOnce(req) {
   await resetRunDir();
+  let skippedData = [];
+  if (req.sessionId) { try { skippedData = await syncData(req.sessionId); } catch (e) {} }
   const files = req.files && req.files.length ? req.files
     : [{ name: 'script.R', content: req.code || '' }];
   const entry = req.entryFile || files[0].name;
   for (const f of files) {
     await webR.FS.writeFile(`/rmobile/run/${f.name}`, new TextEncoder().encode(f.content));
   }
+  if (req.sessionId) { try { await linkData(req.sessionId); } catch (e) {} }
   // Load the harness template and inject the entry file path. Normalise line
   // endings: a CRLF checkout (Windows autocrlf) would otherwise leave a stray \r
   // after `local({`, which WebR's R parser rejects as an "unexpected invalid
@@ -146,14 +222,24 @@ async function runOnce(req) {
 
   const shelter = await new webR.Shelter();
   try {
-    const cap = await shelter.captureR(harness, {
-      withAutoprint: false,
-      captureStreams: true,
-      captureGraphics: { width: 800, height: 600 },
-      env: await webR.objs.globalEnv,
-    });
+    let cap;
+    try {
+      cap = await shelter.captureR(harness, {
+        withAutoprint: false,
+        captureStreams: true,
+        captureGraphics: { width: 800, height: 600 },
+        env: await webR.objs.globalEnv,
+      });
+    } catch (e) {
+      // harness.R runs user code without tryCatch, so a top-level R error (e.g.
+      // read.csv on a missing/too-large file) propagates and captureR throws.
+      // Surface it as stderr WITH the too-large-file note, instead of letting it
+      // escape to webrRun as a bare exception that hides the note.
+      const msg = withSkippedNote(String((e && e.message) || e), skippedData);
+      return { stdout: '', stderr: msg, plots: [], tables: [], workspaceObjects: null, error: null, timedOut: false };
+    }
     const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
-    const stderr = cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n');
+    const stderr = withSkippedNote(cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n'), skippedData);
     const plots = [];
     for (const img of cap.images || []) plots.push(await bitmapToPng(img));
     const tables = await readTables();
@@ -268,4 +354,94 @@ window.webrListPackages = async (id) => {
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ packages: [] }));
   }
+};
+
+// Read-only preview: render an on-device data file or a workspace object as one
+// RTable (capped at 200 rows), without mutating the session. Mirrors the backend
+// /preview endpoint's file/object handling for the Local engine.
+window.webrPreview = async (id, requestJson) => {
+  if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'WebR not ready', truncated: false })); return; }
+  const req = JSON.parse(requestJson);
+  const shelter = await new webR.Shelter();
+  try {
+    let rExpr;
+    let prefixMore = false;   // true when we deliberately read only a file prefix
+    let tmpSrc = null;
+    if (req.source === 'file') {
+      const ext = (req.name.split('.').pop() || '').toLowerCase();
+      let size = 0;
+      try { const m = JSON.parse(AndroidBridge.dataList(req.sessionId)).find((f) => f.name === req.name); if (m) size = m.size; } catch (e) {}
+      if ((ext === 'csv' || ext === 'tsv') && size > 0) {
+        // A preview is a peek: pull only a prefix (plenty for the first ~200 rows)
+        // instead of syncing the whole file into the in-memory VFS. This lets an
+        // arbitrarily large CSV/TSV preview on-device — matching the Remote engine —
+        // without the OOM/skip that full sync hits. read.csv(nrows=201) stops early;
+        // a record cut at the prefix boundary lands past row 200 (never displayed).
+        const PREFIX_BYTES = 8 * 1024 * 1024;
+        const want = Math.min(size, PREFIX_BYTES);
+        const buf = new Uint8Array(want);
+        let o = 0;
+        for (let off = 0; off < want; off += DATA_CHUNK) {
+          const b64 = AndroidBridge.dataChunk(req.sessionId, req.name, off, Math.min(DATA_CHUNK, want - off));
+          if (!b64) break;
+          const chunk = b64ToBytes(b64);
+          const n = Math.min(chunk.length, want - o);
+          buf.set(chunk.subarray(0, n), o); o += n;
+        }
+        tmpSrc = '/tmp/rmobile_preview_src';
+        await webR.FS.writeFile(tmpSrc, buf.subarray(0, o));
+        prefixMore = size > want;   // we cut the file, so there are definitely more rows
+        const reader = ext === 'csv' ? 'read.csv' : 'read.delim';
+        rExpr = `${reader}(${JSON.stringify(tmpSrc)}, check.names = FALSE, nrows = 201L)`;
+      } else {
+        // rds (and anything else): needs the whole file; sync it (skipped if too big).
+        if (req.sessionId) await syncData(req.sessionId);
+        const path = `/rmobile/data/${req.sessionId}/${req.name}`;
+        const existsR = await webR.evalR(`file.exists(${JSON.stringify(path)})`);
+        const exists = (await existsR.toArray())[0] === true; webR.destroy(existsR);
+        if (!exists) {
+          AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'This file is too large to load on the on-device (Local) engine, which keeps data in memory. Switch to the Remote engine in Settings to preview large data.', truncated: false }));
+          return;
+        }
+        rExpr = `local({ p <- ${JSON.stringify(path)}; ext <- tolower(tools::file_ext(p)); ` +
+          `if (ext %in% c('rds')) readRDS(p) ` +
+          `else stop(sprintf('Preview of .%s files needs the Remote engine.', ext)) })`;
+      }
+    } else {
+      rExpr = `get(${JSON.stringify(req.name)}, envir = globalenv())`;
+    }
+    await webR.evalRVoid(`.pv <- try(${rExpr}, silent = TRUE)`);
+    const okR = await webR.evalR(`!inherits(.pv, "try-error")`);
+    const ok = (await okR.toArray())[0] === true; webR.destroy(okR);
+    if (!ok) {
+      const eR = await webR.evalR(`as.character(attr(.pv, "condition")$message)`);
+      const msg = (await eR.toArray())[0] || 'Could not read for preview.'; webR.destroy(eR);
+      await webR.evalRVoid('if (exists(".pv")) rm(.pv)');
+      AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(msg), truncated: false }));
+      return;
+    }
+    // Emit the RTable JSON by writing it to a file and reading the bytes back —
+    // the same proven path as readTables() for /execute. jsonlite::toJSON returns
+    // a class-"json" character; extracting it via RObject.toArray() proved
+    // unreliable on-device (columns survived but rows came back empty), whereas
+    // FS.readFile + TextDecoder + JSON.parse round-trips the full string intact.
+    await webR.evalRVoid(
+      `local({ df <- as.data.frame(.pv); n <- nrow(df); more <- n > 200; sub <- utils::head(df, 200); ` +
+      `cols <- names(sub); types <- vapply(sub, function(c) class(c)[1], character(1)); ` +
+      `cells <- lapply(sub, function(c) as.character(format(c, trim = TRUE))); ` +
+      `rows <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(c) c[i], character(1)))); ` +
+      `js <- jsonlite::toJSON(list(columns = as.character(cols), columnTypes = as.character(types), rows = rows, ` +
+      `totalRows = jsonlite::unbox(as.integer(nrow(sub))), more = jsonlite::unbox(more)), auto_unbox = FALSE); ` +
+      `writeLines(js, "/tmp/rmobile_preview.json") })`
+    );
+    const bytes = await webR.FS.readFile('/tmp/rmobile_preview.json');
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    const truncated = prefixMore || parsed.more === true;
+    delete parsed.more;
+    await webR.evalRVoid('unlink("/tmp/rmobile_preview.json"); rm(.pv)');
+    if (tmpSrc) { try { await webR.evalRVoid(`unlink(${JSON.stringify(tmpSrc)})`); } catch (e) {} }
+    AndroidBridge.onResult(id, JSON.stringify({ table: parsed, error: null, truncated }));
+  } catch (e) {
+    AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));
+  } finally { shelter.purge(); }
 };

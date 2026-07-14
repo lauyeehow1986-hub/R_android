@@ -1,5 +1,6 @@
 package com.rmobile.console.ui.editor
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -7,13 +8,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -56,6 +58,15 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
         RTableViewOps.display(table.rows, table.columnTypes, filter, sortColumn, ascending)
     }
 
+    // Total width of one row, used for the row-separator lines. We can't use
+    // HorizontalDivider() inside the horizontalScroll container below: it applies
+    // fillMaxWidth() internally, which resolves to an *infinite* width in the
+    // unbounded scroll constraints and breaks the column's layout so no rows after
+    // the first separator get placed (invisible until this fix). A width-bounded Box
+    // avoids that. Each cell is width(w).padding(6.dp), i.e. w + 12.dp wide.
+    val rowWidth = widths.fold(0.dp) { acc, w -> acc + w + 12.dp }
+    val dividerColor = MaterialTheme.colorScheme.outlineVariant
+
     Column(modifier = modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = filter,
@@ -65,7 +76,11 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         )
         Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            Row {
+            // IntrinsicSize.Min so the resize-handle's fillMaxHeight() resolves to the
+            // header text height. Without it, in a bounded-height host (PreviewScreen's
+            // fillMaxSize) fillMaxHeight expands the header to the full screen height,
+            // pushing every data row off the bottom.
+            Row(Modifier.height(IntrinsicSize.Min)) {
                 table.columns.forEachIndexed { c, name ->
                     val numeric = table.columnTypes.getOrElse(c) { "" } in RTableViewOps.NUMERIC_TYPES
                     val indicator = if (sortColumn == c) (if (ascending) " ▲" else " ▼") else ""
@@ -101,7 +116,7 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            HorizontalDivider()
+            Box(Modifier.width(rowWidth).height(1.dp).background(dividerColor))
             displayed.forEach { row ->
                 Row {
                     row.forEachIndexed { c, cell ->
@@ -119,7 +134,7 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
                         )
                     }
                 }
-                HorizontalDivider()
+                Box(Modifier.width(rowWidth).height(1.dp).background(dividerColor))
             }
         }
         if (table.totalRows > table.rows.size) {
