@@ -116,15 +116,27 @@ async function syncData(sessionId) {
       size = (await sz.toArray())[0]; webR.destroy(sz);
     } catch (e) {}
     if (size === f.size) continue;
-    const parts = [];
-    for (let off = 0; off < f.size; off += DATA_CHUNK) {
-      const b64 = AndroidBridge.dataChunk(sessionId, f.name, off, DATA_CHUNK);
-      if (!b64) break;
-      parts.push(b64ToBytes(b64));
+    // Stream chunks into ONE pre-allocated buffer (not an array of chunks + a second
+    // joined buffer), so peak memory is ~fileSize, not ~2x. The whole file still has
+    // to fit in the in-memory VFS, so a too-large file throws (RangeError on the
+    // allocation, or an OOM on write). Catch it: skip that one file so other files
+    // still sync and ordinary runs keep working — it just isn't readable on-device
+    // (the Remote engine handles large data). Without this, one big file would break
+    // every run/preview in the session.
+    try {
+      const all = new Uint8Array(f.size);
+      let o = 0;
+      for (let off = 0; off < f.size; off += DATA_CHUNK) {
+        const b64 = AndroidBridge.dataChunk(sessionId, f.name, off, DATA_CHUNK);
+        if (!b64) break;
+        const chunk = b64ToBytes(b64);
+        all.set(chunk, o);
+        o += chunk.length;
+      }
+      await webR.FS.writeFile(path, all);
+    } catch (e) {
+      try { await webR.evalRVoid(`unlink(${JSON.stringify(path)})`); } catch (e2) {}
     }
-    let total = 0; for (const p of parts) total += p.length;
-    const all = new Uint8Array(total); let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
-    await webR.FS.writeFile(path, all);
   }
 }
 
@@ -329,6 +341,16 @@ window.webrPreview = async (id, requestJson) => {
   try {
     if (req.source === 'file' && req.sessionId) await syncData(req.sessionId);
     const path = req.source === 'file' ? `/rmobile/data/${req.sessionId}/${req.name}` : null;
+    if (path) {
+      // syncData skips files too large for the in-memory VFS; if the file isn't
+      // there, say so plainly instead of surfacing a raw "cannot open" R error.
+      const existsR = await webR.evalR(`file.exists(${JSON.stringify(path)})`);
+      const exists = (await existsR.toArray())[0] === true; webR.destroy(existsR);
+      if (!exists) {
+        AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'This file is too large to load on the on-device (Local) engine, which keeps data in memory. Switch to the Remote engine in Settings to preview large data.', truncated: false }));
+        return;
+      }
+    }
     const rExpr = req.source === 'file'
       ? `local({ p <- ${JSON.stringify(path)}; ext <- tolower(tools::file_ext(p)); ` +
         `if (ext %in% c('csv')) read.csv(p, check.names = FALSE) ` +
