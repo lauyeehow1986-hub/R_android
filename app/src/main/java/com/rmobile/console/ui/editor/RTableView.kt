@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -75,7 +76,11 @@ fun RTableView(table: RTable, modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         )
         Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            Row {
+            // IntrinsicSize.Min so the resize-handle's fillMaxHeight() resolves to the
+            // header text height. Without it, in a bounded-height host (PreviewScreen's
+            // fillMaxSize) fillMaxHeight expands the header to the full screen height,
+            // pushing every data row off the bottom.
+            Row(Modifier.height(IntrinsicSize.Min)) {
                 table.columns.forEachIndexed { c, name ->
                     val numeric = table.columnTypes.getOrElse(c) { "" } in RTableViewOps.NUMERIC_TYPES
                     val indicator = if (sortColumn == c) (if (ascending) " ▲" else " ▼") else ""
