@@ -61,6 +61,13 @@ class SnapshotStoreTest {
         assertArrayEquals("fresh".toByteArray(), s.read(0, s.size()))
     }
 
+    @Test fun `commit with no pending tmp leaves the committed file intact`() {
+        val s = store()
+        s.begin(); s.append("keep".toByteArray()); s.commit()
+        s.commit() // no tmp present now — must be a no-op, not a wipe
+        assertEquals("keep".length, s.size())
+    }
+
     @Test fun `delete removes committed file and any dangling tmp`() {
         val s = store()
         s.begin(); s.append(byteArrayOf(1)); s.commit()

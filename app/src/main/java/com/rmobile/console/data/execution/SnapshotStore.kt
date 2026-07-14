@@ -38,11 +38,18 @@ class SnapshotStore(private val file: File) {
         FileOutputStream(tmp, true).use { it.write(bytes) }
     }
 
-    /** Atomically promote the tmp to the committed file. */
+    /** Atomically promote the tmp to the committed file, replacing any prior snapshot. */
     fun commit() {
         if (!tmp.exists()) return
-        file.delete()
-        check(tmp.renameTo(file)) { "SnapshotStore commit failed: could not promote ${tmp.name}" }
+        // REPLACE_EXISTING is an atomic rename on the same filesystem (tmp is a sibling
+        // of file), so a failed promote throws WITHOUT having first destroyed the last
+        // good snapshot — unlike delete()+renameTo(), which had a window where a rename
+        // failure lost both. Works on Android (POSIX rename) and on the Windows JVM test
+        // host (where bare File.renameTo won't overwrite an existing target).
+        java.nio.file.Files.move(
+            tmp.toPath(), file.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+        )
     }
 
     /** Remove the committed file and any dangling tmp. */
