@@ -15,7 +15,7 @@ class SnapshotStore(private val file: File) {
     private val tmp = File(file.parentFile, file.name + ".tmp")
 
     /** Committed size in bytes (0 if nothing committed). Int to match the JS bridge contract. */
-    fun size(): Int = if (file.exists()) file.length().toInt() else 0
+    fun size(): Int = file.length().toInt()
 
     /** Bytes [offset, offset+length), clamped to end; empty if offset is at/after end. */
     fun read(offset: Int, length: Int): ByteArray {
@@ -40,10 +40,9 @@ class SnapshotStore(private val file: File) {
 
     /** Atomically promote the tmp to the committed file. */
     fun commit() {
-        if (tmp.exists()) {
-            file.delete()
-            tmp.renameTo(file)
-        }
+        if (!tmp.exists()) return
+        file.delete()
+        check(tmp.renameTo(file)) { "SnapshotStore commit failed: could not promote ${tmp.name}" }
     }
 
     /** Remove the committed file and any dangling tmp. */

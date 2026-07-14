@@ -53,6 +53,14 @@ class SnapshotStoreTest {
         assertEquals("newer-payload".length, s.size())
     }
 
+    @Test fun `begin discards a prior uncommitted tmp`() {
+        val s = store()
+        s.begin(); s.append("partial-aborted".toByteArray()) // never committed
+        s.begin(); s.append("fresh".toByteArray()); s.commit()
+        assertEquals("fresh".length, s.size())
+        assertArrayEquals("fresh".toByteArray(), s.read(0, s.size()))
+    }
+
     @Test fun `delete removes committed file and any dangling tmp`() {
         val s = store()
         s.begin(); s.append(byteArrayOf(1)); s.commit()
