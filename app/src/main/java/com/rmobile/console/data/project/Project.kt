@@ -1,5 +1,6 @@
 package com.rmobile.console.data.project
 
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -13,6 +14,7 @@ data class Project(
     val activeFileName: String,
     val entryFileName: String,
     val updatedAt: Long,
+    val engine: ExecutionEngineChoice? = null,
 )
 
 /**
@@ -29,7 +31,7 @@ object ProjectOps {
 
     fun isValidFileName(name: String): Boolean = FILE_NAME_REGEX.matches(name)
 
-    fun newProject(id: Long, name: String, now: Long): Project =
+    fun newProject(id: Long, name: String, now: Long, engine: ExecutionEngineChoice? = null): Project =
         Project(
             id = id,
             name = name,
@@ -37,6 +39,7 @@ object ProjectOps {
             activeFileName = "main.R",
             entryFileName = "main.R",
             updatedAt = now,
+            engine = engine,
         )
 
     fun activeContent(project: Project): String =
