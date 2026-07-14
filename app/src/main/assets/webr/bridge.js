@@ -188,6 +188,15 @@ async function readTables() {
   return tables;
 }
 
+// Prepend a clear explanation when a run couldn't load a too-large data file
+// (skipped by syncData), so R's cryptic "cannot open the connection" is legible.
+function withSkippedNote(stderr, skipped) {
+  if (!skipped || !skipped.length) return stderr;
+  const s = skipped.length > 1;
+  const note = `Note: ${skipped.join(', ')} ${s ? 'are' : 'is'} too large for the on-device (Local) engine and ${s ? 'were' : 'was'} not loaded. Switch to the Remote engine in Settings to read ${s ? 'them' : 'it'} in code.`;
+  return stderr ? `${note}\n${stderr}` : note;
+}
+
 async function resetRunDir() {
   await webR.evalRVoid('unlink("/rmobile/run", recursive = TRUE); dir.create("/rmobile/run"); setwd("/rmobile/run")');
 }
@@ -213,30 +222,33 @@ async function runOnce(req) {
 
   const shelter = await new webR.Shelter();
   try {
-    const cap = await shelter.captureR(harness, {
-      withAutoprint: false,
-      captureStreams: true,
-      captureGraphics: { width: 800, height: 600 },
-      env: await webR.objs.globalEnv,
-    });
-    const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
-    let stderr = cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n');
-    // Files too large for the in-memory VFS were skipped by syncData, so a bare-name
-    // read of them fails with a cryptic "cannot open the connection". Prepend a clear
-    // note so the user knows why and what to do.
-    if (skippedData.length) {
-      const s = skippedData.length > 1;
-      const note = `Note: ${skippedData.join(', ')} ${s ? 'are' : 'is'} too large for the on-device (Local) engine and ${s ? 'were' : 'was'} not loaded. Switch to the Remote engine in Settings to read ${s ? 'them' : 'it'} in code.`;
-      stderr = stderr ? `${note}\n${stderr}` : note;
-    }
-    // TEMP DIAG: show VFS state so we can see why a bare-name read failed.
+    let cap;
     try {
-      const dR = await webR.evalR(`paste(list.files(${JSON.stringify('/rmobile/data/' + req.sessionId)}), collapse=',')`);
-      const dfiles = (await dR.toArray())[0]; webR.destroy(dR);
-      const rR = await webR.evalR(`paste(list.files('/rmobile/run'), collapse=',')`);
-      const rfiles = (await rR.toArray())[0]; webR.destroy(rR);
-      stderr = `DIAG session=${req.sessionId} data=[${dfiles}] run=[${rfiles}] skipped=[${skippedData.join(',')}]\n` + stderr;
-    } catch (e) { stderr = `DIAG err ${String(e)}\n` + stderr; }
+      cap = await shelter.captureR(harness, {
+        withAutoprint: false,
+        captureStreams: true,
+        captureGraphics: { width: 800, height: 600 },
+        env: await webR.objs.globalEnv,
+      });
+    } catch (e) {
+      // harness.R runs user code without tryCatch, so a top-level R error (e.g.
+      // read.csv on a missing/too-large file) propagates and captureR throws.
+      // Surface it as stderr WITH the too-large-file note, instead of letting it
+      // escape to webrRun as a bare exception that hides the note.
+      let msg = String((e && e.message) || e);
+      if (!skippedData.length) {
+        // TEMP DIAG: the note didn't fire, so show the VFS state to explain why.
+        try {
+          const dR = await webR.evalR(`paste(list.files(${JSON.stringify('/rmobile/data/' + req.sessionId)}), collapse=',')`);
+          const dfiles = (await dR.toArray())[0]; webR.destroy(dR);
+          msg = `DIAG session=${req.sessionId} data=[${dfiles}]\n` + msg;
+        } catch (e2) {}
+      }
+      msg = withSkippedNote(msg, skippedData);
+      return { stdout: '', stderr: msg, plots: [], tables: [], workspaceObjects: null, error: null, timedOut: false };
+    }
+    const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
+    const stderr = withSkippedNote(cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n'), skippedData);
     const plots = [];
     for (const img of cap.images || []) plots.push(await bitmapToPng(img));
     const tables = await readTables();
