@@ -235,16 +235,7 @@ async function runOnce(req) {
       // read.csv on a missing/too-large file) propagates and captureR throws.
       // Surface it as stderr WITH the too-large-file note, instead of letting it
       // escape to webrRun as a bare exception that hides the note.
-      let msg = String((e && e.message) || e);
-      if (!skippedData.length) {
-        // TEMP DIAG: the note didn't fire, so show the VFS state to explain why.
-        try {
-          const dR = await webR.evalR(`paste(list.files(${JSON.stringify('/rmobile/data/' + req.sessionId)}), collapse=',')`);
-          const dfiles = (await dR.toArray())[0]; webR.destroy(dR);
-          msg = `DIAG session=${req.sessionId} data=[${dfiles}]\n` + msg;
-        } catch (e2) {}
-      }
-      msg = withSkippedNote(msg, skippedData);
+      const msg = withSkippedNote(String((e && e.message) || e), skippedData);
       return { stdout: '', stderr: msg, plots: [], tables: [], workspaceObjects: null, error: null, timedOut: false };
     }
     const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
