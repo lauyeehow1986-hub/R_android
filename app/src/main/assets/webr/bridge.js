@@ -15,6 +15,11 @@ const SNAP_CHUNK = 512 * 1024; // base64 transfer chunk size (bytes of raw data)
 let lastSnapshotInfo = '';
 let lastRestoreInfo = '';
 
+const WS_RDATA = '/rmobile/workspace.RData';
+const WS_MAX_BYTES = 200 * 1024 * 1024; // don't persist a workspace blob larger than this
+let pendingWorkspaceSnapshot = null;    // in-flight background save.image, awaited before the next run
+let lastWorkspaceInfo = '';
+
 function bytesToB64(bytes) {
   let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) {
@@ -113,6 +118,46 @@ async function restoreLibrary() {
   } catch (e) { lastRestoreInfo = 'restore failed: ' + String(e); }
 }
 
+// Persist the shared Local globalenv across restarts, mirroring the library
+// snapshot. Best-effort: any failure leaves the in-memory workspace and the run
+// result untouched. Called fire-and-forget after each successful run.
+async function snapshotWorkspace() {
+  try {
+    const nR = await webR.evalR('length(ls(globalenv()))');
+    const n = (await nR.toArray())[0];
+    webR.destroy(nR);
+    if (!n) {
+      // An emptied workspace (rm() everything, or a reset) must clear the snapshot,
+      // else boot would restore stale variables.
+      AndroidBridge.snapshotDelete('workspace');
+      lastWorkspaceInfo = 'empty → cleared';
+      return;
+    }
+    // save.image throws if any object can't be serialized (e.g. an open connection);
+    // caught below, which leaves the prior snapshot in place.
+    await webR.evalRVoid(`save.image(${JSON.stringify(WS_RDATA)})`);
+    const bytes = await webR.FS.readFile(WS_RDATA);
+    if (bytes.length > WS_MAX_BYTES) {
+      // Too big to persist; keep the prior (smaller) snapshot rather than clobber it.
+      lastWorkspaceInfo = `too large (${bytes.length}B) → not persisted`;
+      return;
+    }
+    streamBytesOut('workspace', bytes);
+    lastWorkspaceInfo = `saved ${bytes.length}B`;
+  } catch (e) { lastWorkspaceInfo = 'snapshot failed: ' + String(e); }
+}
+
+// Restore the persisted globalenv at boot. Best-effort — a failure boots to an
+// empty workspace (the pre-persistence behavior).
+async function restoreWorkspace() {
+  try {
+    const total = await streamIn('workspace', WS_RDATA);
+    if (!total) { lastWorkspaceInfo = 'no workspace snapshot'; return; }
+    await webR.evalRVoid(`load(${JSON.stringify(WS_RDATA)}, envir = globalenv())`);
+    lastWorkspaceInfo = `restored ${total}B`;
+  } catch (e) { lastWorkspaceInfo = 'restore failed: ' + String(e); }
+}
+
 const DATA_CHUNK = 512 * 1024;
 
 // Lazily mirror the session's on-device data files into /rmobile/data/<session>
@@ -181,6 +226,7 @@ async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
   await restoreLibrary(); // plain R evals (untar + .libPaths) — no FS.mount
+  await restoreWorkspace(); // load() the persisted globalenv — plain R eval, no FS.mount
   ready = true;
   AndroidBridge.onReady();
 }
@@ -223,6 +269,9 @@ async function resetRunDir() {
 }
 
 async function runOnce(req) {
+  // Never let a still-running background workspace snapshot overlap the next run
+  // (both touch globalenv on the single WebR worker). Wait for it first.
+  if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
   await resetRunDir();
   let skippedData = [];
   if (req.sessionId) { try { skippedData = await syncData(req.sessionId); } catch (e) {} }
@@ -267,6 +316,9 @@ async function runOnce(req) {
     const wsR = await webR.evalR('ls(globalenv())');
     const workspaceObjects = await wsR.toArray();
     webR.destroy(wsR);
+    // Persist the (possibly mutated) workspace without blocking the result. The
+    // guard at the top of runOnce awaits this before the next run starts.
+    pendingWorkspaceSnapshot = snapshotWorkspace().finally(() => { pendingWorkspaceSnapshot = null; });
     return { stdout, stderr, plots, tables, workspaceObjects, error: null, timedOut: false };
   } finally { shelter.purge(); }
 }
@@ -290,8 +342,11 @@ window.webrRun = async (id, requestJson) => {
 };
 
 window.webrReset = async (id) => {
-  try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); AndroidBridge.onResult(id, JSON.stringify({ ok: true })); }
-  catch (e) { AndroidBridge.onResult(id, JSON.stringify({ ok: false, error: String(e) })); }
+  try {
+    await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())');
+    AndroidBridge.snapshotDelete('workspace'); // a reset must not resurrect vars on next launch
+    AndroidBridge.onResult(id, JSON.stringify({ ok: true }));
+  } catch (e) { AndroidBridge.onResult(id, JSON.stringify({ ok: false, error: String(e) })); }
 };
 
 // Package management (device-verified). webr::install resolves against the
