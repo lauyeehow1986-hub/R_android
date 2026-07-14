@@ -79,6 +79,12 @@ bundled repo is searched first and the network is the fallback.
   `utils::untar(..., tar = "internal")`'d at boot. `tar="internal"` is required —
   the default `untar` shells out via `system()`, which Emscripten/WebR forbids. This
   deliberately avoids WebR's IDBFS `FS.mount`, which destabilised the eval channel.
+- The Local **workspace** (the shared WebR `globalenv()`) persists the same way:
+  `save.image` to `/rmobile/workspace.RData`, streamed to `filesDir` in base64 chunks
+  and `load()`ed back into `globalenv()` at boot. It's snapshotted after each successful
+  run (fire-and-forget, guarded so it can't race the next run) and skipped above a 200 MB
+  blob; a `webrReset` or an emptied workspace clears it. Kotlin's `SnapshotStore` (keyed by
+  `kind`: `library` | `workspace`) is the shared transport for both.
 - `bridge.js` strips `\r` from `harness.R` on load, and `.gitattributes` pins
   `webr/*.R` to LF: a CRLF checkout otherwise leaves a stray `\r` after `local({`
   that WebR's R parser rejects, breaking every run.

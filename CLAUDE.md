@@ -450,12 +450,15 @@ pulling only new/changed), and `linkData()` symlinks them into each run's cwd (`
 fallback if WASM symlinks misbehave) — synced after `resetRunDir`, linked after the run's
 own files so those shadow same-named data files. **Preview** is engine-routed too (added to
 `ExecutionEngine`; Local = `bridge.js` `webrPreview`, which reads a file/object and emits an
-`RTable`). **v1 boundaries (deliberate, not built yet)** — the local **workspace**
-(variables) is still in-process (resets on app restart), and **engine choice is app-wide,
-not per-project**. The Data/Packages screens adapt their caption to the active engine
-(the Data screen also warns above 200 MB on Local, since its FS is in-memory). These are
-documented fast-follows.
+`RTable`). The Local **workspace** (the shared WebR `globalenv()`) now **persists across
+app restarts** via a `save.image`→`filesDir`→`load()`-at-boot snapshot — the same
+best-effort snapshot/restore path as the package library, streamed through the shared
+`SnapshotStore` (keyed by `kind`: `library` | `workspace`). It's snapshotted after each
+successful run (fire-and-forget, guarded so it can't race the next run, skipped above a
+200 MB blob) and cleared on reset. **v1 boundary that remains (deliberate, not built
+yet)** — **engine choice is app-wide, not per-project**. The Data/Packages screens adapt
+their caption to the active engine (the Data screen also warns above 200 MB on Local,
+since its FS is in-memory).
 
-Still **not** built — don't assume these exist: cross-restart persistence of the
-local *workspace* (variables), per-project engine choice, and (backend)
-network-egress restriction in the dev profile or per-request VM isolation.
+Still **not** built — don't assume these exist: per-project engine choice, and
+(backend) network-egress restriction in the dev profile or per-request VM isolation.
