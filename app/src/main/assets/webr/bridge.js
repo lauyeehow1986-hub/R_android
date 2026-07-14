@@ -29,6 +29,45 @@ function b64ToBytes(b64) {
   return out;
 }
 
+// Stream a buffer of bytes to Kotlin under the given snapshot kind ('library' |
+// 'workspace'), in base64 chunks. Split from streamOut so a caller that already
+// holds the bytes (workspace, which size-checks first) needn't re-read the file.
+function streamBytesOut(kind, bytes) {
+  AndroidBridge.snapshotBegin(kind);
+  for (let i = 0; i < bytes.length; i += SNAP_CHUNK) {
+    AndroidBridge.snapshotAppend(kind, bytesToB64(bytes.subarray(i, i + SNAP_CHUNK)));
+  }
+  AndroidBridge.snapshotCommit(kind);
+}
+
+// Read a VFS file and stream its bytes to Kotlin. Returns the byte count.
+async function streamOut(kind, vfsPath) {
+  const bytes = await webR.FS.readFile(vfsPath);
+  streamBytesOut(kind, bytes);
+  return bytes.length;
+}
+
+// Pull a snapshot kind's bytes back from Kotlin into a VFS file.
+// Returns the byte count written, or 0 if there is no stored snapshot.
+async function streamIn(kind, vfsPath) {
+  const size = AndroidBridge.snapshotSize(kind);
+  if (!size) return 0;
+  const parts = [];
+  let total = 0;
+  for (let off = 0; off < size; off += SNAP_CHUNK) {
+    const b64 = AndroidBridge.snapshotRead(kind, off, SNAP_CHUNK);
+    if (!b64) break;
+    const part = b64ToBytes(b64);
+    parts.push(part);
+    total += part.length;
+  }
+  const all = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) { all.set(p, o); o += p.length; }
+  await webR.FS.writeFile(vfsPath, all);
+  return total;
+}
+
 // Lazily create a user package library and put it first on .libPaths(), so
 // installs land there and library() finds them. Called on demand by the package
 // ops (and by restore at boot) — never in the plain run path.
@@ -51,33 +90,15 @@ async function snapshotLibrary() {
       `local({ owd <- getwd(); on.exit(setwd(owd)); setwd(${JSON.stringify(USER_LIB)}); ` +
       `utils::tar(${JSON.stringify(SNAP_TARBALL)}, ".", compression = "none") })`
     );
-    const bytes = await webR.FS.readFile(SNAP_TARBALL);
-    AndroidBridge.snapshotBegin();
-    for (let i = 0; i < bytes.length; i += SNAP_CHUNK) {
-      AndroidBridge.snapshotAppend(bytesToB64(bytes.subarray(i, i + SNAP_CHUNK)));
-    }
-    AndroidBridge.snapshotCommit();
-    lastSnapshotInfo = `tar ${bytes.length}B → stored ${AndroidBridge.snapshotSize()}B`;
+    const n = await streamOut('library', SNAP_TARBALL);
+    lastSnapshotInfo = `tar ${n}B → stored ${AndroidBridge.snapshotSize('library')}B`;
   } catch (e) { lastSnapshotInfo = 'snapshot failed: ' + String(e); }
 }
 
 async function restoreLibrary() {
   try {
-    const size = AndroidBridge.snapshotSize();
-    if (!size) { lastRestoreInfo = 'no snapshot'; return; }
-    const parts = [];
-    let total = 0;
-    for (let off = 0; off < size; off += SNAP_CHUNK) {
-      const b64 = AndroidBridge.snapshotRead(off, SNAP_CHUNK);
-      if (!b64) break;
-      const part = b64ToBytes(b64);
-      parts.push(part);
-      total += part.length;
-    }
-    const all = new Uint8Array(total);
-    let o = 0;
-    for (const p of parts) { all.set(p, o); o += p.length; }
-    await webR.FS.writeFile(SNAP_TARBALL, all);
+    const total = await streamIn('library', SNAP_TARBALL);
+    if (!total) { lastRestoreInfo = 'no snapshot'; return; }
     await webR.evalRVoid(
       `dir.create(${JSON.stringify(USER_LIB)}, showWarnings = FALSE, recursive = TRUE); ` +
       // tar="internal" is REQUIRED: the default untar shells out to the external

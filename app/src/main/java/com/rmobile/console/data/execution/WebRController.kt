@@ -74,12 +74,14 @@ class WebRController(context: Context) {
         }
     }
 
-    // Persist the on-device package library across app restarts as a gzip tarball
-    // under filesDir. Transferred in base64 chunks (the bridge marshals strings),
-    // so a large library doesn't hit a single-call size limit. This deliberately
-    // avoids WebR's IDBFS FS.mount, which destabilised the eval channel.
-    private val snapshotFile get() = java.io.File(appContext.filesDir, "webr-library.tar.gz")
-    private val snapshotTmp get() = java.io.File(appContext.filesDir, "webr-library.tar.gz.tmp")
+    // Persisted snapshots under filesDir, streamed to/from the WebR VFS in base64
+    // chunks (the bridge marshals strings), so a large payload doesn't hit a
+    // single-call size limit. Two kinds: the package library tarball and the
+    // workspace (save.image) blob. This deliberately avoids WebR's IDBFS FS.mount,
+    // which destabilised the eval channel.
+    private val libraryStore = SnapshotStore(java.io.File(appContext.filesDir, "webr-library.tar.gz"))
+    private val workspaceStore = SnapshotStore(java.io.File(appContext.filesDir, "webr-workspace.RData"))
+    private fun snapshotStore(kind: String) = if (kind == "workspace") workspaceStore else libraryStore
 
     // On-device data files live at filesDir/localdata/<sanitized-session>/ (written
     // by LocalSessionDataStore); the bridge pulls them into WebR on demand.
@@ -95,30 +97,25 @@ class WebRController(context: Context) {
         }
         @JavascriptInterface fun onResult(id: Int, json: String) { pending.remove(id)?.complete(json) }
 
-        @JavascriptInterface fun snapshotSize(): Int =
-            if (snapshotFile.exists()) snapshotFile.length().toInt() else 0
+        @JavascriptInterface fun snapshotSize(kind: String): Int =
+            try { snapshotStore(kind).size() } catch (e: Exception) { 0 }
 
-        @JavascriptInterface fun snapshotRead(offset: Int, length: Int): String = try {
-            val f = snapshotFile
-            val total = if (f.exists()) f.length().toInt() else 0
-            if (offset >= total) "" else {
-                val buf = ByteArray(minOf(offset + length, total) - offset)
-                java.io.RandomAccessFile(f, "r").use { it.seek(offset.toLong()); it.readFully(buf) }
-                android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
-            }
+        @JavascriptInterface fun snapshotRead(kind: String, offset: Int, length: Int): String = try {
+            val buf = snapshotStore(kind).read(offset, length)
+            if (buf.isEmpty()) "" else android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
         } catch (e: Exception) { "" }
 
-        @JavascriptInterface fun snapshotBegin() {
-            try { snapshotTmp.delete(); snapshotTmp.parentFile?.mkdirs(); snapshotTmp.createNewFile() } catch (e: Exception) {}
+        @JavascriptInterface fun snapshotBegin(kind: String) {
+            try { snapshotStore(kind).begin() } catch (e: Exception) {}
         }
-        @JavascriptInterface fun snapshotAppend(b64: String) {
-            try {
-                val bytes = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
-                java.io.FileOutputStream(snapshotTmp, true).use { it.write(bytes) }
-            } catch (e: Exception) {}
+        @JavascriptInterface fun snapshotAppend(kind: String, b64: String) {
+            try { snapshotStore(kind).append(android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)) } catch (e: Exception) {}
         }
-        @JavascriptInterface fun snapshotCommit() {
-            try { if (snapshotTmp.exists()) { snapshotFile.delete(); snapshotTmp.renameTo(snapshotFile) } } catch (e: Exception) {}
+        @JavascriptInterface fun snapshotCommit(kind: String) {
+            try { snapshotStore(kind).commit() } catch (e: Exception) {}
+        }
+        @JavascriptInterface fun snapshotDelete(kind: String) {
+            try { snapshotStore(kind).delete() } catch (e: Exception) {}
         }
 
         @JavascriptInterface fun dataList(sessionId: String): String {
