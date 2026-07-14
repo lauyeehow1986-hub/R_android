@@ -300,7 +300,17 @@ function(req, res) {
     stderr = result$stderr,
     plots = plots,
     tables = tables,
-    error = if (result$status != 0) sprintf("R exited with status %d.", result$status) else NULL,
+    # A negative status (or >=128) means the process was killed by a signal — on
+    # this hardened, memory-capped container that's almost always the OOM killer
+    # (e.g. read.csv on a multi-hundred-MB file), not a code error. Say so plainly
+    # instead of the cryptic "exited with status -9".
+    error = if (result$status != 0) {
+      if (isTRUE(result$status < 0) || isTRUE(result$status >= 128)) {
+        "The run was terminated before finishing — most likely it ran out of memory (e.g. reading a very large file). Try a smaller dataset, read it in chunks, or give the backend more memory."
+      } else {
+        sprintf("R exited with status %d.", result$status)
+      }
+    } else NULL,
     timedOut = FALSE,
     workspaceObjects = workspace_objects
   )

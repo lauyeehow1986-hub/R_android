@@ -97,11 +97,14 @@ const DATA_CHUNK = 512 * 1024;
 // Lazily mirror the session's on-device data files into /rmobile/data/<session>
 // (persists for the app process), pulling only new/changed files and dropping
 // deleted ones. Chunked base64 transfer, like the library snapshot.
+// Returns the names of files that couldn't be synced (too large for the in-memory
+// VFS), so the caller can tell the user why a bare-name read failed.
 async function syncData(sessionId) {
+  const skipped = [];
   const dir = `/rmobile/data/${sessionId}`;
   await webR.evalRVoid(`dir.create(${JSON.stringify(dir)}, showWarnings = FALSE, recursive = TRUE)`);
   let wanted;
-  try { wanted = JSON.parse(AndroidBridge.dataList(sessionId)); } catch (e) { return; }
+  try { wanted = JSON.parse(AndroidBridge.dataList(sessionId)); } catch (e) { return skipped; }
   const wantedNames = new Set(wanted.map((f) => f.name));
   const haveR = await webR.evalR(`list.files(${JSON.stringify(dir)})`);
   const have = await haveR.toArray(); webR.destroy(haveR);
@@ -136,8 +139,10 @@ async function syncData(sessionId) {
       await webR.FS.writeFile(path, all);
     } catch (e) {
       try { await webR.evalRVoid(`unlink(${JSON.stringify(path)})`); } catch (e2) {}
+      skipped.push(f.name);
     }
   }
+  return skipped;
 }
 
 // Make the session's data files readable by bare name from the run cwd. Called
@@ -189,7 +194,8 @@ async function resetRunDir() {
 
 async function runOnce(req) {
   await resetRunDir();
-  if (req.sessionId) { try { await syncData(req.sessionId); } catch (e) {} }
+  let skippedData = [];
+  if (req.sessionId) { try { skippedData = await syncData(req.sessionId); } catch (e) {} }
   const files = req.files && req.files.length ? req.files
     : [{ name: 'script.R', content: req.code || '' }];
   const entry = req.entryFile || files[0].name;
@@ -214,7 +220,15 @@ async function runOnce(req) {
       env: await webR.objs.globalEnv,
     });
     const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
-    const stderr = cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n');
+    let stderr = cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n');
+    // Files too large for the in-memory VFS were skipped by syncData, so a bare-name
+    // read of them fails with a cryptic "cannot open the connection". Prepend a clear
+    // note so the user knows why and what to do.
+    if (skippedData.length) {
+      const s = skippedData.length > 1;
+      const note = `Note: ${skippedData.join(', ')} ${s ? 'are' : 'is'} too large for the on-device (Local) engine and ${s ? 'were' : 'was'} not loaded. Switch to the Remote engine in Settings to read ${s ? 'them' : 'it'} in code.`;
+      stderr = stderr ? `${note}\n${stderr}` : note;
+    }
     const plots = [];
     for (const img of cap.images || []) plots.push(await bitmapToPng(img));
     const tables = await readTables();
