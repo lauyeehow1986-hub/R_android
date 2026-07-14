@@ -86,7 +86,9 @@ test_that("preview caps rows and reports truncation", {
   pv <- post_preview(server, "file", up$body$name, session_id = "s1")
   expect_equal(pv$status, 200)
   expect_equal(length(pv$body$table$rows), 3)
-  expect_equal(pv$body$table$totalRows, 5)
+  # A preview reads only cap+1 rows, so the exact total isn't known; totalRows is
+  # the displayed count and truncated signals "there's more".
+  expect_equal(pv$body$table$totalRows, 3)
   expect_true(pv$body$truncated)
 })
 

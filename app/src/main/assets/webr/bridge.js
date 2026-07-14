@@ -351,10 +351,12 @@ window.webrPreview = async (id, requestJson) => {
         return;
       }
     }
+    // Read only 201 rows for csv/tsv (cap + 1 to detect "there's more"): a preview
+    // is a peek, so we never parse a whole large file just to show 200 rows.
     const rExpr = req.source === 'file'
       ? `local({ p <- ${JSON.stringify(path)}; ext <- tolower(tools::file_ext(p)); ` +
-        `if (ext %in% c('csv')) read.csv(p, check.names = FALSE) ` +
-        `else if (ext %in% c('tsv')) read.delim(p, check.names = FALSE) ` +
+        `if (ext %in% c('csv')) read.csv(p, check.names = FALSE, nrows = 201L) ` +
+        `else if (ext %in% c('tsv')) read.delim(p, check.names = FALSE, nrows = 201L) ` +
         `else if (ext %in% c('rds')) readRDS(p) ` +
         `else stop(sprintf('Preview of .%s files needs the Remote engine.', ext)) })`
       : `get(${JSON.stringify(req.name)}, envir = globalenv())`;
@@ -374,18 +376,20 @@ window.webrPreview = async (id, requestJson) => {
     // unreliable on-device (columns survived but rows came back empty), whereas
     // FS.readFile + TextDecoder + JSON.parse round-trips the full string intact.
     await webR.evalRVoid(
-      `local({ df <- as.data.frame(.pv); n <- nrow(df); sub <- utils::head(df, 200); ` +
+      `local({ df <- as.data.frame(.pv); n <- nrow(df); more <- n > 200; sub <- utils::head(df, 200); ` +
       `cols <- names(sub); types <- vapply(sub, function(c) class(c)[1], character(1)); ` +
       `cells <- lapply(sub, function(c) as.character(format(c, trim = TRUE))); ` +
       `rows <- lapply(seq_len(nrow(sub)), function(i) as.character(vapply(cells, function(c) c[i], character(1)))); ` +
       `js <- jsonlite::toJSON(list(columns = as.character(cols), columnTypes = as.character(types), rows = rows, ` +
-      `totalRows = jsonlite::unbox(as.integer(n))), auto_unbox = FALSE); ` +
+      `totalRows = jsonlite::unbox(as.integer(nrow(sub))), more = jsonlite::unbox(more)), auto_unbox = FALSE); ` +
       `writeLines(js, "/tmp/rmobile_preview.json") })`
     );
     const bytes = await webR.FS.readFile('/tmp/rmobile_preview.json');
-    const table = JSON.parse(new TextDecoder().decode(bytes));
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    const truncated = parsed.more === true;
+    delete parsed.more;
     await webR.evalRVoid('unlink("/tmp/rmobile_preview.json"); rm(.pv)');
-    AndroidBridge.onResult(id, JSON.stringify({ table, error: null, truncated: table.totalRows > 200 }));
+    AndroidBridge.onResult(id, JSON.stringify({ table: parsed, error: null, truncated }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));
   } finally { shelter.purge(); }

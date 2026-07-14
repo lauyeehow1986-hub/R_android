@@ -339,7 +339,15 @@ read-only** — it never calls `save.image()` or otherwise mutates session
 state — and `table` is a single object, not an array (`/execute`'s `tables` is
 a list; a preview only ever shows one thing). The backend implementation
 reuses the shared `TABLE_EMIT_HELPERS` R source (factored out of `/execute`'s
-handler) so both endpoints emit byte-identical `table*.json`. File preview
+handler) so both endpoints emit byte-identical `table*.json`. A preview is a
+**peek**: for `.csv`/`.tsv` it reads only the first `R_TABLE_MAX_ROWS + 1` rows
+(via `read.csv(nrows=)`), so a multi-hundred-MB file doesn't get fully parsed
+into memory (that OOM-killed the subprocess before this) — the on-device
+`webrPreview` does the same with `nrows = 201L`. Because a capped read can't know
+the true total, when there are more rows than the cap the handler trims to the
+cap and sets `truncated = TRUE` (via a `truncated.flag` marker); `table.totalRows`
+is then the **displayed** count, not the true total, and `PreviewScreen` shows a
+"Showing the first N rows" note. File preview
 (`source: "file"`) reads a session data file by extension — base R for
 `.csv`/`.tsv`/`.rds`, `readxl`/`arrow` for `.xlsx`/`.parquet` when those
 packages are installed in the session's library, else a friendly install-it
