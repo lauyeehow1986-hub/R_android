@@ -102,7 +102,11 @@ them into WebR's in-memory FS on demand:
   same-named run file shadows a data file. **If `file.symlink` isn't supported by
   this WebR build, switch `linkData` to `file.copy`.**
 - `window.webrPreview(id, requestJson)` renders a file (by extension) or a
-  workspace object as one `RTable` (read-only), for the on-device data viewer.
+  workspace object as one `RTable` (read-only), for the on-device data viewer. A
+  preview is a peek: for `.csv`/`.tsv` it pulls only an **8 MB prefix** of the file
+  into the VFS and reads the first 201 rows (`nrows = 201L`), so a large CSV
+  previews on-device without loading it all into memory; `.rds` still needs a full
+  sync (and shows the "too large for on-device" message if it doesn't fit).
 
 ## License
 

@@ -339,27 +339,52 @@ window.webrPreview = async (id, requestJson) => {
   const req = JSON.parse(requestJson);
   const shelter = await new webR.Shelter();
   try {
-    if (req.source === 'file' && req.sessionId) await syncData(req.sessionId);
-    const path = req.source === 'file' ? `/rmobile/data/${req.sessionId}/${req.name}` : null;
-    if (path) {
-      // syncData skips files too large for the in-memory VFS; if the file isn't
-      // there, say so plainly instead of surfacing a raw "cannot open" R error.
-      const existsR = await webR.evalR(`file.exists(${JSON.stringify(path)})`);
-      const exists = (await existsR.toArray())[0] === true; webR.destroy(existsR);
-      if (!exists) {
-        AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'This file is too large to load on the on-device (Local) engine, which keeps data in memory. Switch to the Remote engine in Settings to preview large data.', truncated: false }));
-        return;
+    let rExpr;
+    let prefixMore = false;   // true when we deliberately read only a file prefix
+    let tmpSrc = null;
+    if (req.source === 'file') {
+      const ext = (req.name.split('.').pop() || '').toLowerCase();
+      let size = 0;
+      try { const m = JSON.parse(AndroidBridge.dataList(req.sessionId)).find((f) => f.name === req.name); if (m) size = m.size; } catch (e) {}
+      if ((ext === 'csv' || ext === 'tsv') && size > 0) {
+        // A preview is a peek: pull only a prefix (plenty for the first ~200 rows)
+        // instead of syncing the whole file into the in-memory VFS. This lets an
+        // arbitrarily large CSV/TSV preview on-device — matching the Remote engine —
+        // without the OOM/skip that full sync hits. read.csv(nrows=201) stops early;
+        // a record cut at the prefix boundary lands past row 200 (never displayed).
+        const PREFIX_BYTES = 8 * 1024 * 1024;
+        const want = Math.min(size, PREFIX_BYTES);
+        const buf = new Uint8Array(want);
+        let o = 0;
+        for (let off = 0; off < want; off += DATA_CHUNK) {
+          const b64 = AndroidBridge.dataChunk(req.sessionId, req.name, off, Math.min(DATA_CHUNK, want - off));
+          if (!b64) break;
+          const chunk = b64ToBytes(b64);
+          const n = Math.min(chunk.length, want - o);
+          buf.set(chunk.subarray(0, n), o); o += n;
+        }
+        tmpSrc = '/tmp/rmobile_preview_src';
+        await webR.FS.writeFile(tmpSrc, buf.subarray(0, o));
+        prefixMore = size > want;   // we cut the file, so there are definitely more rows
+        const reader = ext === 'csv' ? 'read.csv' : 'read.delim';
+        rExpr = `${reader}(${JSON.stringify(tmpSrc)}, check.names = FALSE, nrows = 201L)`;
+      } else {
+        // rds (and anything else): needs the whole file; sync it (skipped if too big).
+        if (req.sessionId) await syncData(req.sessionId);
+        const path = `/rmobile/data/${req.sessionId}/${req.name}`;
+        const existsR = await webR.evalR(`file.exists(${JSON.stringify(path)})`);
+        const exists = (await existsR.toArray())[0] === true; webR.destroy(existsR);
+        if (!exists) {
+          AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'This file is too large to load on the on-device (Local) engine, which keeps data in memory. Switch to the Remote engine in Settings to preview large data.', truncated: false }));
+          return;
+        }
+        rExpr = `local({ p <- ${JSON.stringify(path)}; ext <- tolower(tools::file_ext(p)); ` +
+          `if (ext %in% c('rds')) readRDS(p) ` +
+          `else stop(sprintf('Preview of .%s files needs the Remote engine.', ext)) })`;
       }
+    } else {
+      rExpr = `get(${JSON.stringify(req.name)}, envir = globalenv())`;
     }
-    // Read only 201 rows for csv/tsv (cap + 1 to detect "there's more"): a preview
-    // is a peek, so we never parse a whole large file just to show 200 rows.
-    const rExpr = req.source === 'file'
-      ? `local({ p <- ${JSON.stringify(path)}; ext <- tolower(tools::file_ext(p)); ` +
-        `if (ext %in% c('csv')) read.csv(p, check.names = FALSE, nrows = 201L) ` +
-        `else if (ext %in% c('tsv')) read.delim(p, check.names = FALSE, nrows = 201L) ` +
-        `else if (ext %in% c('rds')) readRDS(p) ` +
-        `else stop(sprintf('Preview of .%s files needs the Remote engine.', ext)) })`
-      : `get(${JSON.stringify(req.name)}, envir = globalenv())`;
     await webR.evalRVoid(`.pv <- try(${rExpr}, silent = TRUE)`);
     const okR = await webR.evalR(`!inherits(.pv, "try-error")`);
     const ok = (await okR.toArray())[0] === true; webR.destroy(okR);
@@ -386,9 +411,10 @@ window.webrPreview = async (id, requestJson) => {
     );
     const bytes = await webR.FS.readFile('/tmp/rmobile_preview.json');
     const parsed = JSON.parse(new TextDecoder().decode(bytes));
-    const truncated = parsed.more === true;
+    const truncated = prefixMore || parsed.more === true;
     delete parsed.more;
     await webR.evalRVoid('unlink("/tmp/rmobile_preview.json"); rm(.pv)');
+    if (tmpSrc) { try { await webR.evalRVoid(`unlink(${JSON.stringify(tmpSrc)})`); } catch (e) {} }
     AndroidBridge.onResult(id, JSON.stringify({ table: parsed, error: null, truncated }));
   } catch (e) {
     AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));

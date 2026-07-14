@@ -343,7 +343,10 @@ handler) so both endpoints emit byte-identical `table*.json`. A preview is a
 **peek**: for `.csv`/`.tsv` it reads only the first `R_TABLE_MAX_ROWS + 1` rows
 (via `read.csv(nrows=)`), so a multi-hundred-MB file doesn't get fully parsed
 into memory (that OOM-killed the subprocess before this) — the on-device
-`webrPreview` does the same with `nrows = 201L`. Because a capped read can't know
+`webrPreview` goes further and syncs only an **8 MB prefix** of a large CSV/TSV
+into the VFS (not the whole file, which its in-memory VFS can't hold) before the
+same `nrows = 201L` read, so a large CSV previews on-device too. Because a capped
+read can't know
 the true total, when there are more rows than the cap the handler trims to the
 cap and sets `truncated = TRUE` (via a `truncated.flag` marker); `table.totalRows`
 is then the **displayed** count, not the true total, and `PreviewScreen` shows a
