@@ -5,6 +5,7 @@ import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.project.Project
 import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.scripts.SavedScript
+import com.rmobile.console.data.settings.ExecutionEngineChoice
 
 data class EditorUiState(
     /** The open project. */
@@ -26,4 +27,6 @@ data class EditorUiState(
     val completionSymbols: List<String> = emptyList(),
     val help: HelpState? = null,
     val swapPhase: SwapPhase = SwapPhase.IDLE,
+    /** The app-wide default engine, used to resolve a project's engine when it hasn't picked one. */
+    val engineDefault: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL,
 )

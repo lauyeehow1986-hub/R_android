@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.ServiceLocator
 import com.rmobile.console.data.execution.ExecutionEngine
+import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.UninstallRequest
 import com.rmobile.console.data.network.NetworkModule
@@ -22,6 +23,7 @@ class PackagesViewModel(
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
     private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
     private val engineProvider: (ExecutionEngineChoice) -> ExecutionEngine = { ServiceLocator.engineFor(it) },
+    private val swapProgress: StateFlow<SwapPhase> = ServiceLocator.swapProgress,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PackagesUiState())
@@ -33,6 +35,7 @@ class PackagesViewModel(
     init {
         resolveContext()
         refresh()
+        viewModelScope.launch { swapProgress.collect { phase -> _uiState.update { it.copy(swapPhase = phase) } } }
     }
 
     /**

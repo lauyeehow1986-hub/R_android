@@ -15,6 +15,7 @@ const WS_MAX_BYTES = 200 * 1024 * 1024;
 const MAX_RESIDENT_LIBS = 3;                         // LRU cap on lib dirs kept in the VFS
 
 let currentSession = null;                           // the session whose state is live
+let baseLibPaths = null;                             // pristine .libPaths() captured at boot
 let pendingWorkspaceSnapshot = null;                 // in-flight background save.image
 let runGeneration = 0;                               // bumped per run so a timed-out zombie run won't snapshot late
 const residentLibs = [];                             // session ids with a restored lib dir (LRU order)
@@ -78,13 +79,15 @@ async function streamIn(kind, sessionId, vfsPath) {
 
 function libDir(sessionId) { return `${USER_LIB_ROOT}/${sessionId}`; }
 
-// Create the current session's lib dir and put it first on .libPaths(), so installs
-// land there and library() finds them. Called by ensureSession and the package ops.
+// Point .libPaths() at ONLY this session's lib dir + the pristine base. This RESETS
+// (not unions) each swap, so a previously-visited project's library can't remain
+// searchable — that would defeat per-project package isolation. Called by ensureSession.
 async function ensureUserLib(sessionId) {
   const dir = libDir(sessionId);
+  const paths = [dir, ...(baseLibPaths || [])].map((p) => JSON.stringify(p)).join(', ');
   await webR.evalRVoid(
     `dir.create(${JSON.stringify(dir)}, showWarnings = FALSE, recursive = TRUE); ` +
-    `.libPaths(unique(c(${JSON.stringify(dir)}, .libPaths())))`
+    `.libPaths(c(${paths}))`
   );
 }
 
@@ -112,8 +115,7 @@ async function ensureLibResident(sessionId) {
     }
     lastRestoreInfo = `lib ${sessionId}: restored ${total}B`;
   } catch (e) { lastRestoreInfo = `lib ${sessionId}: restore failed: ` + String(e); }
-  residentLibs.push(sessionId);
-  touchResident(sessionId);
+  touchResident(sessionId); // adds it (absent) as most-recently-used
 }
 
 // Bound in-process VFS growth: keep at most MAX_RESIDENT_LIBS session lib dirs
@@ -287,6 +289,11 @@ async function linkData(sessionId) {
 async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
+  // Capture the pristine library paths BEFORE any session dir is added, so
+  // ensureUserLib can reset .libPaths to exactly [session dir, ...base] each swap.
+  const bp = await webR.evalR('.libPaths()');
+  baseLibPaths = await bp.toArray();
+  webR.destroy(bp);
   // No eager restore: per-session workspace/library are restored lazily by
   // ensureSession on the first session-scoped op (the app always runs in a project).
   ready = true;

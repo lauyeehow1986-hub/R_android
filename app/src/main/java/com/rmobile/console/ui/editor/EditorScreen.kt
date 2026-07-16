@@ -84,7 +84,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.settings.ExecutionEngineChoice
@@ -245,17 +244,17 @@ fun EditorScreen(
                                 onOpenData()
                             },
                         )
+                        val resolvedEngine = ExecutionEngineChoice.resolve(
+                            uiState.project.engine, uiState.engineDefault,
+                        )
                         DropdownMenuItem(
                             text = {
-                                Text(
-                                    if (uiState.project.engine == ExecutionEngineChoice.REMOTE) "Engine: Remote"
-                                    else "Engine: Local",
-                                )
+                                Text(if (resolvedEngine == ExecutionEngineChoice.REMOTE) "Engine: Remote" else "Engine: Local")
                             },
                             onClick = {
                                 menuOpen = false
                                 viewModel.setProjectEngine(
-                                    if (uiState.project.engine == ExecutionEngineChoice.REMOTE) ExecutionEngineChoice.LOCAL
+                                    if (resolvedEngine == ExecutionEngineChoice.REMOTE) ExecutionEngineChoice.LOCAL
                                     else ExecutionEngineChoice.REMOTE,
                                 )
                             },
@@ -318,15 +317,9 @@ fun EditorScreen(
                 }
             }
 
-            if (uiState.swapPhase != SwapPhase.IDLE) {
+            com.rmobile.console.ui.swapPhaseLabel(uiState.swapPhase)?.let { label ->
                 Text(
-                    when (uiState.swapPhase) {
-                        SwapPhase.SAVING_WORKSPACE -> "Switching project… saving workspace"
-                        SwapPhase.LOADING_WORKSPACE -> "Switching project… loading workspace"
-                        SwapPhase.RESTORING_LIBRARY -> "Switching project… restoring packages"
-                        SwapPhase.RESTORE_FAILED -> "Couldn't load saved workspace — starting empty"
-                        SwapPhase.IDLE -> ""
-                    },
+                    label,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

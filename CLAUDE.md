@@ -418,7 +418,7 @@ engine-agnostic; the WebR harness (`assets/webr/harness.R`) mirrors the backend'
 **on-device package install** — `ExecutionEngine` carries `listPackages`/`install`/
 `uninstall` (Remote delegates to the backend endpoints; Local delegates to
 `WebRController` → `bridge.js` `webrInstall`/`webrUninstall`/`webrListPackages`),
-and `PackagesViewModel` routes them through `ServiceLocator.currentExecutionEngine()`.
+and `PackagesViewModel` routes them through `ServiceLocator.engineFor(engineChoice)`.
 Local installs are **hybrid-sourced** — `webr::install(pkg, repos = c(<bundled repo>,
 "https://repo.r-wasm.org"))` searches a bundled mini-repo (`assets/webr/repo/`,
 vendored by `scripts/fetch-webr-packages.mjs`: tidyverse + easystats core + full

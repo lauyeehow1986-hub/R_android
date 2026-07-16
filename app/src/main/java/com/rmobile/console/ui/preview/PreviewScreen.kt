@@ -50,7 +50,20 @@ fun PreviewScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).padding(16.dp), contentAlignment = Alignment.TopStart) {
             when {
-                state.isLoading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                state.isLoading -> Column(
+                    Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator()
+                    com.rmobile.console.ui.swapPhaseLabel(state.swapPhase)?.let { label ->
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                }
                 state.error != null -> Text(state.error!!, color = MaterialTheme.colorScheme.error)
                 state.table != null -> Column(Modifier.fillMaxSize()) {
                     if (state.truncated) {

@@ -6,6 +6,7 @@ import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.ServiceLocator
 import com.rmobile.console.data.datafiles.DataUpload
 import com.rmobile.console.data.datafiles.SessionDataStore
+import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.project.ProjectSession
 import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.settings.ExecutionEngineChoice
@@ -19,6 +20,7 @@ class DataViewModel(
     private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
     private val dataStoreProvider: (ExecutionEngineChoice) -> SessionDataStore = { ServiceLocator.dataStoreFor(it) },
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
+    private val swapProgress: StateFlow<SwapPhase> = ServiceLocator.swapProgress,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DataUiState())
@@ -26,7 +28,10 @@ class DataViewModel(
     private var session: String = RExecutionRepository.DEFAULT_SESSION_ID
     private var engineChoice: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL
 
-    init { resolveContext(); refresh() }
+    init {
+        resolveContext(); refresh()
+        viewModelScope.launch { swapProgress.collect { phase -> _uiState.update { it.copy(swapPhase = phase) } } }
+    }
 
     private fun resolveContext() {
         val projects = projectStore.loadProjects()

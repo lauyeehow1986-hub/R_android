@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.ServiceLocator
 import com.rmobile.console.data.execution.ExecutionEngine
+import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.model.PreviewRequest
 import com.rmobile.console.data.project.ProjectSession
 import com.rmobile.console.data.project.ProjectStore
@@ -19,6 +20,7 @@ class PreviewViewModel(
     private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
     private val engineProvider: (ExecutionEngineChoice) -> ExecutionEngine = { ServiceLocator.engineFor(it) },
     private val projectStore: ProjectStore = ServiceLocator.settingsStore,
+    private val swapProgress: StateFlow<SwapPhase> = ServiceLocator.swapProgress,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PreviewUiState())
@@ -29,6 +31,7 @@ class PreviewViewModel(
 
     init {
         resolveSession()
+        viewModelScope.launch { swapProgress.collect { phase -> _uiState.update { it.copy(swapPhase = phase) } } }
     }
 
     private fun resolveSession() {

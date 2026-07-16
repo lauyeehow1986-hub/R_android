@@ -1,5 +1,7 @@
 package com.rmobile.console.ui.packages
 
+import com.rmobile.console.data.execution.SwapPhase
+
 data class PackagesUiState(
     val installed: List<String> = emptyList(),
     val packageName: String = "",
@@ -9,4 +11,5 @@ data class PackagesUiState(
     val isError: Boolean = false,
     val projectName: String = "",
     val engineIsLocal: Boolean = false,
+    val swapPhase: SwapPhase = SwapPhase.IDLE,
 )

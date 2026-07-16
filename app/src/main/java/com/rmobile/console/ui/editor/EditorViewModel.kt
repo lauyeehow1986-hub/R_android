@@ -59,6 +59,7 @@ class EditorViewModel(
                 code = ProjectOps.activeContent(current),
                 history = historyStore.load(),
                 savedScripts = scriptStore.loadScripts(),
+                engineDefault = defaultEngine(),
             ),
         )
         uiState = _uiState.asStateFlow()

@@ -1,5 +1,6 @@
 package com.rmobile.console.ui.preview
 
+import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.model.RTable
 
 data class PreviewUiState(
@@ -9,4 +10,5 @@ data class PreviewUiState(
     val error: String? = null,
     val truncated: Boolean = false,
     val totalRows: Int = 0,
+    val swapPhase: SwapPhase = SwapPhase.IDLE,
 )
