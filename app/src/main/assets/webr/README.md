@@ -95,9 +95,14 @@ bundled repo is searched first and the network is the fallback.
   `ensureSession(sessionId)` is the choke point called at the top of every
   session-scoped op (run, preview, install/uninstall/list, reset). When the incoming
   session differs from the live one it **swaps**: `save.image` the outgoing session's
-  workspace, clear `globalenv()`, `load()` the incoming session's, and point
-  `.libPaths()` at its lib dir (restoring the tarball into the VFS if not already
-  resident). A same-session op is a no-op. Migration of the pre-per-project shared
+  workspace, clear `globalenv()`, **unload the outgoing project's `library()`'d
+  packages** (`resetPackagesToBase` detaches/unloads everything beyond the base set
+  captured at boot — R namespaces load into the one shared process, so this stops a
+  package loaded in one project from staying live in another), `load()` the incoming
+  session's workspace, and point `.libPaths()` at its lib dir (restoring the tarball
+  into the VFS if not already resident). A same-session op is a no-op. Like an app
+  restart, a swap does not re-attach the incoming project's packages — user code
+  re-runs `library(...)` (the workspace snapshot stores objects, not the search path). Migration of the pre-per-project shared
   `webr-workspace.RData` / `webr-library.tar.gz` into the last-open project is a
   one-time Kotlin file rename (`LegacyLocalStateMigration`) run at startup.
 - **LRU library eviction.** `residentLibs` tracks which session lib dirs are in the

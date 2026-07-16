@@ -196,6 +196,30 @@ async function restoreWorkspace(sessionId) {
   } catch (e) { lastWorkspaceInfo = `${sessionId}: restore failed: ` + String(e); return false; }
 }
 
+// Reset loaded/attached packages to the base set captured at boot. R namespaces load
+// into the single shared WebR process, so a package library()'d in one project would
+// otherwise stay loaded after switching projects. Detach non-base attached packages
+// (dependents first, retrying), then unload any remaining non-base namespaces. All
+// best-effort — a package that refuses to unload is left loaded rather than erroring.
+async function resetPackagesToBase() {
+  try {
+    await webR.evalRVoid(
+      'local({\n' +
+      '  keepNs <- getOption("rmobile.base.ns", character(0));\n' +
+      '  keepAt <- getOption("rmobile.base.attached", search());\n' +
+      '  repeat {\n' +
+      '    pkgs <- grep("^package:", setdiff(search(), keepAt), value = TRUE);\n' +
+      '    if (!length(pkgs)) break;\n' +
+      '    prog <- FALSE;\n' +
+      '    for (p in pkgs) { if (tryCatch({ detach(p, character.only = TRUE, unload = TRUE); TRUE }, error = function(e) FALSE)) { prog <- TRUE; break } };\n' +
+      '    if (!prog) break;\n' +
+      '  };\n' +
+      '  for (i in 1:5) { extra <- setdiff(loadedNamespaces(), keepNs); if (!length(extra)) break; for (ns in extra) tryCatch(unloadNamespace(ns), error = function(e) NULL) };\n' +
+      '})'
+    );
+  } catch (e) { /* best-effort — never blocks a swap */ }
+}
+
 // Make sessionId the live session: swap the workspace out/in and point .libPaths at
 // its lib. A no-op when it is already current. Best-effort throughout; a failed
 // restore records lastSwapWarning (surfaced into the run's stderr) but never throws.
@@ -207,6 +231,7 @@ async function ensureSession(sessionId) {
       AndroidBridge.onSwapProgress('SAVING_WORKSPACE');
       await snapshotWorkspace(currentSession);
       try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); } catch (e) {}
+      await resetPackagesToBase(); // don't let the outgoing project's library()'d packages leak
     }
     AndroidBridge.onSwapProgress('LOADING_WORKSPACE');
     const ok = await restoreWorkspace(sessionId);
@@ -294,6 +319,10 @@ async function boot() {
   const bp = await webR.evalR('.libPaths()');
   baseLibPaths = await bp.toArray();
   webR.destroy(bp);
+  // Capture the base loaded/attached packages so a project swap can unload anything
+  // a project library()'d — otherwise a loaded namespace stays live and leaks across
+  // projects. Stored in options() (survives the globalenv clear on each swap).
+  await webR.evalRVoid('options(rmobile.base.ns = loadedNamespaces(), rmobile.base.attached = search())');
   // No eager restore: per-session workspace/library are restored lazily by
   // ensureSession on the first session-scoped op (the app always runs in a project).
   ready = true;
@@ -431,9 +460,10 @@ window.webrReset = async (id, sessionId, purge) => {
     // pre-reset bytes get streamed to disk AFTER our snapshotDelete, resurrecting
     // exactly what the reset is clearing.
     if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
-    // Clear the live globalenv only if this is the live session.
+    // Clear the live globalenv (and unload its packages) only if this is the live session.
     if (sessionId === currentSession) {
       try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); } catch (e) {}
+      await resetPackagesToBase();
     }
     AndroidBridge.snapshotDelete('workspace', sessionId); // must not resurrect vars on next launch
     if (purge) {

@@ -456,8 +456,12 @@ own files so those shadow same-named data files. **Preview** is engine-routed to
 `ExecutionEngine`; Local = `bridge.js` `webrPreview`, which reads a file/object and emits an
 `RTable`). The Local engine is now **per-project isolated**: one WebR instance, but
 `bridge.js` `ensureSession(sessionId)` swaps the live `globalenv()` **and**
-`.libPaths()` when the active project (a `proj-<id>` session) changes, so each project
-has its own workspace *and* package library. Per-session snapshots
+`.libPaths()` when the active project (a `proj-<id>` session) changes — and, because R
+namespaces load into the one shared process, also **unloads the outgoing project's
+`library()`'d packages** (`resetPackagesToBase`, back to the base set captured at boot)
+so a loaded package can't leak across projects. So each project has its own workspace
+*and* package library. (Like an app restart, a swap doesn't re-attach the incoming
+project's packages — user code re-runs `library()`.) Per-session snapshots
 (`webr-workspace-<session>.RData` / `webr-library-<session>.tar.gz`) persist across
 restarts; `SnapshotStore` is selected per `(kind, session)` (filenames from
 `SnapshotNaming`). Swaps show progress (`SwapPhase`/`ServiceLocator.swapProgress`,
