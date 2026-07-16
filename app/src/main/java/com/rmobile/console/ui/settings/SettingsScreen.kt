@@ -64,9 +64,9 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Execution engine", style = MaterialTheme.typography.titleMedium)
+            Text("Default engine for new projects", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Local runs R on your device with WebR — your code and data never leave the phone. Remote sends code to the backend for full package compatibility.",
+                "New projects start on this engine. Local runs R on your device with WebR — your code and data never leave the phone; Remote sends code to the backend for full package compatibility. Change an existing project's engine from the editor's ⋮ menu.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -83,7 +83,7 @@ fun SettingsScreen(
                 )
             }
             Text(
-                "Data files and installed packages apply to the Remote engine. Local runs use only WebR's built-in packages.",
+                "Each project keeps its own workspace, installed packages, and data files — on both engines, isolated per project.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
