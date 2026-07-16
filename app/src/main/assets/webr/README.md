@@ -9,8 +9,10 @@ no backend round-trip, inside a hidden WebView.
 - `scripts/fetch-webr.sh` — vendors the runtime into `dist/` (and applies the
   AAPT `.gz` fix below).
 - `index.html` + `bridge.js` — the page loaded in the offscreen WebView; boots
-  WebR and exposes `window.webrRun(id, requestJson)` / `window.webrReset(id)` to
-  Kotlin, running the harness and posting back `ExecuteResponse`-shaped JSON.
+  WebR and exposes `window.webrRun(id, requestJson)` /
+  `window.webrReset(id, sessionId, purge)` (plus the session-scoped package/preview
+  entrypoints) to Kotlin, running the harness and posting back
+  `ExecuteResponse`-shaped JSON.
 - `harness.R` — the R harness sourced per run (mirrors the backend `/execute`
   wrapper: a `withVisible` loop + the `TABLE_EMIT_HELPERS` table emitter).
 - `dist/` — the WebR runtime itself (committed, so the app is
@@ -71,20 +73,44 @@ bundled repo is searched first and the network is the fallback.
 - These are `.tgz`, not `.gz`, so the AAPT auto-gunzip issue that affects the VFS
   images (above) does **not** apply — do not introduce bare `.gz` files under
   `repo/`.
-- Installed packages land in a user library (`/rmobile/library`, prepended to
-  `.libPaths()` lazily by the package ops — never at boot, so the run path is
-  unaffected). The library **persists across app restarts** via snapshot/restore:
-  after each install/uninstall it's `utils::tar`'d and streamed to Kotlin in base64
-  chunks (stored under `filesDir`), then written back and
-  `utils::untar(..., tar = "internal")`'d at boot. `tar="internal"` is required —
-  the default `untar` shells out via `system()`, which Emscripten/WebR forbids. This
-  deliberately avoids WebR's IDBFS `FS.mount`, which destabilised the eval channel.
-- The Local **workspace** (the shared WebR `globalenv()`) persists the same way:
-  `save.image` to `/rmobile/workspace.RData`, streamed to `filesDir` in base64 chunks
-  and `load()`ed back into `globalenv()` at boot. It's snapshotted after each successful
-  run (fire-and-forget, guarded so it can't race the next run) and skipped above a 200 MB
-  blob; a `webrReset` or an emptied workspace clears it. Kotlin's `SnapshotStore` (keyed by
-  `kind`: `library` | `workspace`) is the shared transport for both.
+- Installed packages land in a **per-session** user library
+  (`/rmobile/library/<session>`, prepended to `.libPaths()` by the package ops /
+  `ensureSession` — never at boot, so the run path is unaffected). Each session's
+  library **persists across app restarts** via snapshot/restore: after each
+  install/uninstall it's `utils::tar`'d and streamed to Kotlin in base64 chunks
+  (stored under `filesDir` as `webr-library-<session>.tar.gz`), then written back and
+  `utils::untar(..., tar = "internal")`'d when that session first becomes live.
+  `tar="internal"` is required — the default `untar` shells out via `system()`, which
+  Emscripten/WebR forbids. This deliberately avoids WebR's IDBFS `FS.mount`, which
+  destabilised the eval channel.
+- The Local **workspace** persists the same way, **per session**: `save.image` to
+  `/rmobile/workspace.RData`, streamed to `filesDir` as `webr-workspace-<session>.RData`
+  and `load()`ed back into `globalenv()` when that session becomes live. It's
+  snapshotted after each successful run (fire-and-forget, guarded so it can't race the
+  next run) and skipped above a 200 MB blob; a `webrReset` or an emptied workspace
+  clears it. Kotlin's `SnapshotStore` (selected per `(kind, session)`, kinds
+  `library` | `workspace`, filenames from `SnapshotNaming`) is the shared transport.
+- **Session swap (`ensureSession`).** WebR is one instance, so each project (a
+  `proj-<id>` session) takes turns owning the live `globalenv()` and `.libPaths()`.
+  `ensureSession(sessionId)` is the choke point called at the top of every
+  session-scoped op (run, preview, install/uninstall/list, reset). When the incoming
+  session differs from the live one it **swaps**: `save.image` the outgoing session's
+  workspace, clear `globalenv()`, `load()` the incoming session's, and point
+  `.libPaths()` at its lib dir (restoring the tarball into the VFS if not already
+  resident). A same-session op is a no-op. Migration of the pre-per-project shared
+  `webr-workspace.RData` / `webr-library.tar.gz` into the last-open project is a
+  one-time Kotlin file rename (`LegacyLocalStateMigration`) run at startup.
+- **LRU library eviction.** `residentLibs` tracks which session lib dirs are in the
+  VFS (use-order); past `MAX_RESIDENT_LIBS` (3) the least-recently-used one is
+  unmounted + unlinked (it re-restores from its Kotlin tarball on next visit),
+  bounding in-process VFS growth. Only libraries accumulate — `globalenv()` holds one
+  session at a time.
+- **Swap progress + error surfacing.** `ensureSession` emits phases via
+  `AndroidBridge.onSwapProgress(SAVING_WORKSPACE|LOADING_WORKSPACE|RESTORING_LIBRARY|
+  RESTORE_FAILED|IDLE)` (a "Switching project…" indicator). A failed workspace restore
+  boots that session empty **and** records a `lastSwapWarning` that the next run
+  prepends to its stderr, so the user sees it rather than silently getting a blank
+  workspace.
 - `bridge.js` strips `\r` from `harness.R` on load, and `.gitattributes` pins
   `webr/*.R` to LF: a CRLF checkout otherwise leaves a stray `\r` after `local({`
   that WebR's R parser rejects, breaking every run.

@@ -157,10 +157,11 @@ Retrofit client, not worth a framework yet):
   `SharedArrayBuffer` channel) and marshals a JS↔Kotlin bridge. The one live WebR
   instance **is** the local session, so the workspace persists across runs within
   an app process (but not across app restarts — see boundaries below). The engine
-  is chosen per run from `SettingsStore.executionEngine` via
-  `ServiceLocator.currentExecutionEngine()` (read fresh each run so a Settings
-  toggle takes effect immediately); `EditorViewModel` routes `runCode`/
-  `resetSession` through an `engineProvider`. **Harness parity coupling**:
+  is chosen **per project**: `Project.engine` (nullable) resolved via
+  `ExecutionEngineChoice.resolve(project.engine, SettingsStore.executionEngine)` and
+  looked up through `ServiceLocator.engineFor(choice)` (read fresh each op so an engine
+  toggle takes effect immediately); `EditorViewModel` routes `runCode`/`resetSession`
+  through an `engineProvider: (ExecutionEngineChoice) -> ExecutionEngine`. **Harness parity coupling**:
   `assets/webr/harness.R` mirrors the backend `/execute` wrapper's `withVisible`
   loop and duplicates `TABLE_EMIT_HELPERS` from `plumber.R` **byte-for-byte** so
   both engines emit identical `table*.json` — change one, change the other in the
@@ -173,8 +174,9 @@ Retrofit client, not worth a framework yet):
   normalizer. `data/history/` holds the `HistoryEntry` model and `RunHistory`
   (pure list logic). `data/ServiceLocator` is initialized once by
   `RMobileApplication` (it holds the app `Context` so it can build the
-  `WebRController`), applies persisted settings to `NetworkModule` at startup, and
-  exposes `currentExecutionEngine()`; the (context-less) ViewModels read it via
+  `WebRController`), applies persisted settings to `NetworkModule` at startup, runs the
+  one-time `LegacyLocalStateMigration`, and exposes `engineFor(choice)` /
+  `dataStoreFor(choice)` / `swapProgress`; the (context-less) ViewModels read it via
   default constructor args, which is also the seam unit tests inject fakes through.
 - `data/project/` — **multi-file projects**: `Project`/`ProjectFile` models,
   pure unit-tested `ProjectOps` (file/project list ops), and the `ProjectStore`
@@ -423,42 +425,58 @@ vendored by `scripts/fetch-webr-packages.mjs`: tidyverse + easystats core + full
 dependency closure, installable **offline**) before falling back to the network for
 anything else. The local **PACKAGES index must carry each package's full upstream
 control block** (Depends/Imports/LinkingTo/MD5sum), or WebR installs a top-level
-package without its deps and it fails to load. Packages install into a user library
-(`/rmobile/library`, created lazily and prepended to `.libPaths()` inside the package
-ops **only** — never at boot, so the run path is untouched). WebR installs each
+package without its deps and it fails to load. Packages install into a **per-session**
+user library (`/rmobile/library/<session>`, created lazily and prepended to
+`.libPaths()` by `ensureSession` / the package ops — never at boot, so the run path is
+untouched). WebR installs each
 package as a **mounted FS image**, so uninstall must `webR.FS.unmount` the package
 path first, then `chmod`+`unlink` any leftover files (an app-restart restores packages
 as plain read-only files instead — the unmount is then a no-op and the unlink clears
 them); removal is confirmed via `installed.packages(noCache = TRUE)` (not the
 directory, which an unmounted mount leaves behind empty), and the namespace is
-unloaded afterward so a loaded package stops working immediately. The library **persists across app restarts** via a
-**snapshot/restore** mechanism (NOT IDBFS `FS.mount`, which destabilised the eval
-channel): after each install/uninstall the library is `utils::tar`'d and streamed to
-Kotlin in base64 chunks (`WebRController` stores it under `filesDir`), and at boot
-it's written back and `utils::untar(..., tar = "internal")`'d before ready
-(`tar="internal"` is required — the default untar shells out via `system()`, which
-Emscripten forbids). `bridge.js` also **strips CR from harness.R** on load: a CRLF
+unloaded afterward so a loaded package stops working immediately. Each session's library
+**persists across app restarts** via a **snapshot/restore** mechanism (NOT IDBFS
+`FS.mount`, which destabilised the eval channel): after each install/uninstall that
+session's library is `utils::tar`'d and streamed to Kotlin in base64 chunks
+(`WebRController` stores it under `filesDir` as `webr-library-<session>.tar.gz`), and
+when that session next becomes live it's written back and
+`utils::untar(..., tar = "internal")`'d (`tar="internal"` is required — the default
+untar shells out via `system()`, which Emscripten forbids). `bridge.js` also **strips CR from harness.R** on load: a CRLF
 (Windows autocrlf) checkout otherwise leaves a stray `\r` after `local({` that WebR's
 R parser rejects (`.gitattributes` also pins `webr/*.R` to LF). The Local engine also
 supports **data import** — data ops route through a `SessionDataStore` abstraction
 (`data/datafiles/`: Remote delegates to the backend `/upload`/`/data`/`/delete-data`;
 Local = `LocalSessionDataStore`, on-device storage under `filesDir/localdata/<session>/`),
-chosen by `ServiceLocator.currentSessionDataStore()`. On-device files are made readable
+chosen by `ServiceLocator.dataStoreFor(engineChoice)`. On-device files are made readable
 by bare name via a **lazy VFS sync**: `bridge.js` `syncData()` mirrors a session's files
 into `/rmobile/data/<session>` (chunked base64 via `WebRController` `dataList`/`dataChunk`,
 pulling only new/changed), and `linkData()` symlinks them into each run's cwd (`copy`
 fallback if WASM symlinks misbehave) — synced after `resetRunDir`, linked after the run's
 own files so those shadow same-named data files. **Preview** is engine-routed too (added to
 `ExecutionEngine`; Local = `bridge.js` `webrPreview`, which reads a file/object and emits an
-`RTable`). The Local **workspace** (the shared WebR `globalenv()`) now **persists across
-app restarts** via a `save.image`→`filesDir`→`load()`-at-boot snapshot — the same
-best-effort snapshot/restore path as the package library, streamed through the shared
-`SnapshotStore` (keyed by `kind`: `library` | `workspace`). It's snapshotted after each
-successful run (fire-and-forget, guarded so it can't race the next run, skipped above a
-200 MB blob) and cleared on reset. **v1 boundary that remains (deliberate, not built
-yet)** — **engine choice is app-wide, not per-project**. The Data/Packages screens adapt
-their caption to the active engine (the Data screen also warns above 200 MB on Local,
-since its FS is in-memory).
+`RTable`). The Local engine is now **per-project isolated**: one WebR instance, but
+`bridge.js` `ensureSession(sessionId)` swaps the live `globalenv()` **and**
+`.libPaths()` when the active project (a `proj-<id>` session) changes, so each project
+has its own workspace *and* package library. Per-session snapshots
+(`webr-workspace-<session>.RData` / `webr-library-<session>.tar.gz`) persist across
+restarts; `SnapshotStore` is selected per `(kind, session)` (filenames from
+`SnapshotNaming`). Swaps show progress (`SwapPhase`/`ServiceLocator.swapProgress`,
+emitted via `AndroidBridge.onSwapProgress`), an LRU cap (`MAX_RESIDENT_LIBS`, default 3)
+bounds resident lib dirs, and a failed workspace restore is surfaced (a stderr warning +
+`RESTORE_FAILED`) rather than silently blanking the workspace. The workspace is
+snapshotted after each successful run (fire-and-forget, guarded so it can't race the
+next run, skipped above a 200 MB blob) and cleared on reset. **Engine choice is now
+per-project** — `Project.engine` (nullable) resolved via
+`ExecutionEngineChoice.resolve(project.engine, settingsDefault)`; the editor's ⋮ menu
+toggles the active project's engine, and the Settings toggle is the **default for new
+projects**. The four session-scoped ViewModels route through
+`ServiceLocator.engineFor(choice)` / `dataStoreFor(choice)`. On upgrade,
+`LegacyLocalStateMigration` (run once in `ServiceLocator.init`) adopts the old shared
+`webr-workspace.RData` / `webr-library.tar.gz` into the last-open project's session.
+The Data/Packages screens adapt their caption to the active project's engine (the Data
+screen also warns above 200 MB on Local, since its FS is in-memory).
 
-Still **not** built — don't assume these exist: per-project engine choice, and
-(backend) network-egress restriction in the dev profile or per-request VM isolation.
+Still **not** built — don't assume these exist: a per-project **shared-library** opt-in
+(advanced users trading isolation for storage; the `(kind, session)` snapshot keying
+leaves the seam open — pass a fixed key for the library kind), and (backend)
+network-egress restriction in the dev profile or per-request VM isolation.

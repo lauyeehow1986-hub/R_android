@@ -103,7 +103,7 @@ class PackagesViewModel(
         }
     }
 
-    /** Uninstalls a package from the shared library, then refreshes the list. */
+    /** Uninstalls a package from the active project's library, then refreshes the list. */
     fun uninstall(packageName: String) {
         viewModelScope.launch {
             engineProvider(engineChoice).uninstall(UninstallRequest(packageName, session))
