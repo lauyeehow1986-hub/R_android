@@ -6,20 +6,22 @@ import { WebR } from './dist/webr.mjs';
 const baseUrl = new URL('./dist/', document.baseURI).href;
 const webR = new WebR({ baseUrl });
 let ready = false;
-let userLibReady = false;
 const LOCAL_REPO_URL = new URL('./repo', document.baseURI).href;
-const USER_LIB = '/rmobile/library';
+const USER_LIB_ROOT = '/rmobile/library';           // per-session libs live at <root>/<session>
+const SNAP_TARBALL = '/rmobile/lib.tar';             // scratch path for a lib tar
+const SNAP_CHUNK = 512 * 1024;
+const WS_RDATA = '/rmobile/workspace.RData';         // scratch path for a workspace blob
+const WS_MAX_BYTES = 200 * 1024 * 1024;
+const MAX_RESIDENT_LIBS = 3;                         // LRU cap on lib dirs kept in the VFS
 
-const SNAP_TARBALL = '/rmobile/lib.tar';
-const SNAP_CHUNK = 512 * 1024; // base64 transfer chunk size (bytes of raw data)
+let currentSession = null;                           // the session whose state is live
+let pendingWorkspaceSnapshot = null;                 // in-flight background save.image
+let runGeneration = 0;                               // bumped per run so a timed-out zombie run won't snapshot late
+const residentLibs = [];                             // session ids with a restored lib dir (LRU order)
+let lastSwapWarning = '';                            // surfaced into the next run's stderr
+let lastWorkspaceInfo = '';
 let lastSnapshotInfo = '';
 let lastRestoreInfo = '';
-
-const WS_RDATA = '/rmobile/workspace.RData';
-const WS_MAX_BYTES = 200 * 1024 * 1024; // don't persist a workspace blob larger than this
-let pendingWorkspaceSnapshot = null;    // in-flight background save.image, awaited before the next run
-let runGeneration = 0;                  // bumped per run so a timed-out zombie run won't snapshot late
-let lastWorkspaceInfo = '';
 
 function bytesToB64(bytes) {
   let s = '';
@@ -36,32 +38,32 @@ function b64ToBytes(b64) {
 }
 
 // Stream a buffer of bytes to Kotlin under the given snapshot kind ('library' |
-// 'workspace'), in base64 chunks. Split from streamOut so a caller that already
-// holds the bytes (workspace, which size-checks first) needn't re-read the file.
-function streamBytesOut(kind, bytes) {
-  AndroidBridge.snapshotBegin(kind);
+// 'workspace') and sessionId, in base64 chunks. Split from streamOut so a caller
+// that already holds the bytes (workspace, which size-checks first) needn't re-read.
+function streamBytesOut(kind, sessionId, bytes) {
+  AndroidBridge.snapshotBegin(kind, sessionId);
   for (let i = 0; i < bytes.length; i += SNAP_CHUNK) {
-    AndroidBridge.snapshotAppend(kind, bytesToB64(bytes.subarray(i, i + SNAP_CHUNK)));
+    AndroidBridge.snapshotAppend(kind, sessionId, bytesToB64(bytes.subarray(i, i + SNAP_CHUNK)));
   }
-  AndroidBridge.snapshotCommit(kind);
+  AndroidBridge.snapshotCommit(kind, sessionId);
 }
 
 // Read a VFS file and stream its bytes to Kotlin. Returns the byte count.
-async function streamOut(kind, vfsPath) {
+async function streamOut(kind, sessionId, vfsPath) {
   const bytes = await webR.FS.readFile(vfsPath);
-  streamBytesOut(kind, bytes);
+  streamBytesOut(kind, sessionId, bytes);
   return bytes.length;
 }
 
-// Pull a snapshot kind's bytes back from Kotlin into a VFS file.
+// Pull a snapshot (kind, sessionId)'s bytes back from Kotlin into a VFS file.
 // Returns the byte count written, or 0 if there is no stored snapshot.
-async function streamIn(kind, vfsPath) {
-  const size = AndroidBridge.snapshotSize(kind);
+async function streamIn(kind, sessionId, vfsPath) {
+  const size = AndroidBridge.snapshotSize(kind, sessionId);
   if (!size) return 0;
   const parts = [];
   let total = 0;
   for (let off = 0; off < size; off += SNAP_CHUNK) {
-    const b64 = AndroidBridge.snapshotRead(kind, off, SNAP_CHUNK);
+    const b64 = AndroidBridge.snapshotRead(kind, sessionId, off, SNAP_CHUNK);
     if (!b64) break;
     const part = b64ToBytes(b64);
     parts.push(part);
@@ -74,64 +76,93 @@ async function streamIn(kind, vfsPath) {
   return total;
 }
 
-// Lazily create a user package library and put it first on .libPaths(), so
-// installs land there and library() finds them. Called on demand by the package
-// ops (and by restore at boot) — never in the plain run path.
-async function ensureUserLib() {
-  if (userLibReady) return;
+function libDir(sessionId) { return `${USER_LIB_ROOT}/${sessionId}`; }
+
+// Create the current session's lib dir and put it first on .libPaths(), so installs
+// land there and library() finds them. Called by ensureSession and the package ops.
+async function ensureUserLib(sessionId) {
+  const dir = libDir(sessionId);
   await webR.evalRVoid(
-    `dir.create(${JSON.stringify(USER_LIB)}, showWarnings = FALSE, recursive = TRUE); ` +
-    `.libPaths(c(${JSON.stringify(USER_LIB)}, .libPaths()))`
+    `dir.create(${JSON.stringify(dir)}, showWarnings = FALSE, recursive = TRUE); ` +
+    `.libPaths(unique(c(${JSON.stringify(dir)}, .libPaths())))`
   );
-  userLibReady = true;
 }
 
-// Cross-restart persistence WITHOUT WebR's IDBFS FS.mount (which broke the eval
-// channel): tar the user library, hand the gzip bytes to Kotlin in base64 chunks
-// to store under filesDir, and untar them back at boot. All best-effort — a
-// failure never blocks install or boot.
-async function snapshotLibrary() {
-  try {
-    await webR.evalRVoid(
-      `local({ owd <- getwd(); on.exit(setwd(owd)); setwd(${JSON.stringify(USER_LIB)}); ` +
-      `utils::tar(${JSON.stringify(SNAP_TARBALL)}, ".", compression = "none") })`
-    );
-    const n = await streamOut('library', SNAP_TARBALL);
-    lastSnapshotInfo = `tar ${n}B → stored ${AndroidBridge.snapshotSize('library')}B`;
-  } catch (e) { lastSnapshotInfo = 'snapshot failed: ' + String(e); }
+// Track a session's lib as most-recently-used (LRU order in residentLibs).
+function touchResident(sessionId) {
+  const i = residentLibs.indexOf(sessionId);
+  if (i >= 0) residentLibs.splice(i, 1);
+  residentLibs.push(sessionId);
 }
 
-async function restoreLibrary() {
+// Restore a session's lib dir from its Kotlin tarball snapshot into the VFS if this
+// process hasn't already. Cross-restart persistence WITHOUT WebR's IDBFS FS.mount
+// (which broke the eval channel). Idempotent; tracks LRU residency. Best-effort.
+async function ensureLibResident(sessionId) {
+  if (residentLibs.includes(sessionId)) { touchResident(sessionId); return; }
+  const dir = libDir(sessionId);
   try {
-    const total = await streamIn('library', SNAP_TARBALL);
-    if (!total) { lastRestoreInfo = 'no snapshot'; return; }
-    await webR.evalRVoid(
-      `dir.create(${JSON.stringify(USER_LIB)}, showWarnings = FALSE, recursive = TRUE); ` +
+    const total = await streamIn('library', sessionId, SNAP_TARBALL);
+    await webR.evalRVoid(`dir.create(${JSON.stringify(dir)}, showWarnings = FALSE, recursive = TRUE)`);
+    if (total) {
       // tar="internal" is REQUIRED: the default untar shells out to the external
       // tar via system(), which is unsupported under Emscripten/WebR.
-      `utils::untar(${JSON.stringify(SNAP_TARBALL)}, exdir = ${JSON.stringify(USER_LIB)}, tar = "internal"); ` +
-      `.libPaths(c(${JSON.stringify(USER_LIB)}, .libPaths()))`
-    );
-    const nR = await webR.evalR(`length(list.files(${JSON.stringify(USER_LIB)}))`);
-    lastRestoreInfo = `restored ${total}B → ${(await nR.toArray())[0]} entries in lib`;
-    webR.destroy(nR);
-    userLibReady = true;
-  } catch (e) { lastRestoreInfo = 'restore failed: ' + String(e); }
+      await webR.evalRVoid(`utils::untar(${JSON.stringify(SNAP_TARBALL)}, exdir = ${JSON.stringify(dir)}, tar = "internal")`);
+      try { await webR.evalRVoid(`unlink(${JSON.stringify(SNAP_TARBALL)})`); } catch (e) {}
+    }
+    lastRestoreInfo = `lib ${sessionId}: restored ${total}B`;
+  } catch (e) { lastRestoreInfo = `lib ${sessionId}: restore failed: ` + String(e); }
+  residentLibs.push(sessionId);
+  touchResident(sessionId);
 }
 
-// Persist the shared Local globalenv across restarts, mirroring the library
-// snapshot. Best-effort: any failure leaves the in-memory workspace and the run
-// result untouched. Called fire-and-forget after each successful run.
-async function snapshotWorkspace() {
+// Bound in-process VFS growth: keep at most MAX_RESIDENT_LIBS session lib dirs
+// restored. Evict the least-recently-used (never the current). An evicted dir
+// re-restores from its Kotlin tarball on next visit. Best-effort.
+async function evictLibsIfOverCap(keepSessionId) {
+  while (residentLibs.length > MAX_RESIDENT_LIBS) {
+    const victim = residentLibs.find((s) => s !== keepSessionId);
+    if (!victim) break;
+    const i = residentLibs.indexOf(victim);
+    residentLibs.splice(i, 1);
+    const dir = libDir(victim);
+    try {
+      // Unmount any freshly-installed (mounted) package images before unlinking.
+      const pkgsR = await webR.evalR(`if (dir.exists(${JSON.stringify(dir)})) list.files(${JSON.stringify(dir)}) else character(0)`);
+      const pkgs = await pkgsR.toArray(); webR.destroy(pkgsR);
+      for (const p of pkgs) { try { await webR.FS.unmount(`${dir}/${p}`); } catch (e) {} }
+      await webR.evalRVoid(`unlink(${JSON.stringify(dir)}, recursive = TRUE, force = TRUE)`);
+    } catch (e) { /* leave it resident on failure — memory, not correctness */ }
+  }
+}
+
+// Tar the current session's lib and hand the bytes to Kotlin under its snapshot.
+async function snapshotLibrary(sessionId) {
+  try {
+    const dir = libDir(sessionId);
+    await webR.evalRVoid(
+      `local({ owd <- getwd(); on.exit(setwd(owd)); setwd(${JSON.stringify(dir)}); ` +
+      `utils::tar(${JSON.stringify(SNAP_TARBALL)}, ".", compression = "none") })`
+    );
+    const n = await streamOut('library', sessionId, SNAP_TARBALL);
+    lastSnapshotInfo = `lib ${sessionId}: tar ${n}B`;
+    try { await webR.evalRVoid(`unlink(${JSON.stringify(SNAP_TARBALL)})`); } catch (e) {}
+  } catch (e) { lastSnapshotInfo = `lib ${sessionId}: snapshot failed: ` + String(e); }
+}
+
+// Persist a session's globalenv, mirroring the library snapshot. Best-effort: any
+// failure leaves the in-memory workspace and the run result untouched. Called
+// fire-and-forget after each successful run and when swapping a session out.
+async function snapshotWorkspace(sessionId) {
   try {
     const nR = await webR.evalR('length(ls(globalenv()))');
     const n = (await nR.toArray())[0];
     webR.destroy(nR);
     if (!n) {
       // An emptied workspace (rm() everything, or a reset) must clear the snapshot,
-      // else boot would restore stale variables.
-      AndroidBridge.snapshotDelete('workspace');
-      lastWorkspaceInfo = 'empty → cleared';
+      // else boot/restore would bring back stale variables.
+      AndroidBridge.snapshotDelete('workspace', sessionId);
+      lastWorkspaceInfo = `${sessionId}: empty → cleared`;
       return;
     }
     // save.image throws if any object can't be serialized (e.g. an open connection);
@@ -140,23 +171,53 @@ async function snapshotWorkspace() {
     const bytes = await webR.FS.readFile(WS_RDATA);
     if (bytes.length > WS_MAX_BYTES) {
       // Too big to persist; keep the prior (smaller) snapshot rather than clobber it.
-      lastWorkspaceInfo = `too large (${bytes.length}B) → not persisted`;
+      lastWorkspaceInfo = `${sessionId}: too large (${bytes.length}B) → not persisted`;
       return;
     }
-    streamBytesOut('workspace', bytes);
-    lastWorkspaceInfo = `saved ${bytes.length}B`;
-  } catch (e) { lastWorkspaceInfo = 'snapshot failed: ' + String(e); }
+    streamBytesOut('workspace', sessionId, bytes);
+    lastWorkspaceInfo = `${sessionId}: saved ${bytes.length}B`;
+    try { await webR.evalRVoid(`unlink(${JSON.stringify(WS_RDATA)})`); } catch (e) {}
+  } catch (e) { lastWorkspaceInfo = `${sessionId}: snapshot failed: ` + String(e); }
 }
 
-// Restore the persisted globalenv at boot. Best-effort — a failure boots to an
-// empty workspace (the pre-persistence behavior).
-async function restoreWorkspace() {
+// Restore a session's persisted globalenv. Returns true on a clean restore (or a
+// genuinely empty session), false if a restore was attempted but threw — the caller
+// records a swap warning in that case. Best-effort: a failure leaves an empty env.
+async function restoreWorkspace(sessionId) {
   try {
-    const total = await streamIn('workspace', WS_RDATA);
-    if (!total) { lastWorkspaceInfo = 'no workspace snapshot'; return; }
+    const total = await streamIn('workspace', sessionId, WS_RDATA);
+    if (!total) { lastWorkspaceInfo = `${sessionId}: no workspace snapshot`; return true; }
     await webR.evalRVoid(`load(${JSON.stringify(WS_RDATA)}, envir = globalenv())`);
-    lastWorkspaceInfo = `restored ${total}B`;
-  } catch (e) { lastWorkspaceInfo = 'restore failed: ' + String(e); }
+    try { await webR.evalRVoid(`unlink(${JSON.stringify(WS_RDATA)})`); } catch (e) {}
+    lastWorkspaceInfo = `${sessionId}: restored ${total}B`;
+    return true;
+  } catch (e) { lastWorkspaceInfo = `${sessionId}: restore failed: ` + String(e); return false; }
+}
+
+// Make sessionId the live session: swap the workspace out/in and point .libPaths at
+// its lib. A no-op when it is already current. Best-effort throughout; a failed
+// restore records lastSwapWarning (surfaced into the run's stderr) but never throws.
+async function ensureSession(sessionId) {
+  if (sessionId === currentSession) return;
+  if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
+  try {
+    if (currentSession != null) {
+      AndroidBridge.onSwapProgress('SAVING_WORKSPACE');
+      await snapshotWorkspace(currentSession);
+      try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); } catch (e) {}
+    }
+    AndroidBridge.onSwapProgress('LOADING_WORKSPACE');
+    const ok = await restoreWorkspace(sessionId);
+    if (!ok) { lastSwapWarning = "Couldn't load this project's saved workspace; starting empty."; AndroidBridge.onSwapProgress('RESTORE_FAILED'); }
+    else { lastSwapWarning = ''; }
+    AndroidBridge.onSwapProgress('RESTORING_LIBRARY');
+    await ensureLibResident(sessionId);
+    await ensureUserLib(sessionId);
+    currentSession = sessionId;
+    await evictLibsIfOverCap(sessionId);
+  } finally {
+    AndroidBridge.onSwapProgress('IDLE');
+  }
 }
 
 const DATA_CHUNK = 512 * 1024;
@@ -226,8 +287,8 @@ async function linkData(sessionId) {
 async function boot() {
   await webR.init();
   await webR.evalRVoid('dir.create("/rmobile", showWarnings = FALSE)');
-  await restoreLibrary(); // plain R evals (untar + .libPaths) — no FS.mount
-  await restoreWorkspace(); // load() the persisted globalenv — plain R eval, no FS.mount
+  // No eager restore: per-session workspace/library are restored lazily by
+  // ensureSession on the first session-scoped op (the app always runs in a project).
   ready = true;
   AndroidBridge.onReady();
 }
@@ -277,6 +338,9 @@ async function runOnce(req) {
   // Never let a still-running background workspace snapshot overlap the next run
   // (both touch globalenv on the single WebR worker). Wait for it first.
   if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
+  // Make this project's session live (swaps workspace + library if it changed).
+  const sessionId = req.sessionId || 'default';
+  await ensureSession(sessionId);
   await resetRunDir();
   let skippedData = [];
   if (req.sessionId) { try { skippedData = await syncData(req.sessionId); } catch (e) {} }
@@ -310,11 +374,13 @@ async function runOnce(req) {
       // read.csv on a missing/too-large file) propagates and captureR throws.
       // Surface it as stderr WITH the too-large-file note, instead of letting it
       // escape to webrRun as a bare exception that hides the note.
-      const msg = withSkippedNote(String((e && e.message) || e), skippedData);
+      let msg = withSkippedNote(String((e && e.message) || e), skippedData);
+      if (lastSwapWarning) { msg = `${lastSwapWarning}\n${msg}`; lastSwapWarning = ''; }
       return { stdout: '', stderr: msg, plots: [], tables: [], workspaceObjects: null, error: null, timedOut: false };
     }
     const stdout = cap.output.filter((o) => o.type === 'stdout').map((o) => o.data).join('\n');
-    const stderr = withSkippedNote(cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n'), skippedData);
+    let stderr = withSkippedNote(cap.output.filter((o) => o.type === 'stderr').map((o) => o.data).join('\n'), skippedData);
+    if (lastSwapWarning) { stderr = stderr ? `${lastSwapWarning}\n${stderr}` : lastSwapWarning; lastSwapWarning = ''; }
     const plots = [];
     for (const img of cap.images || []) plots.push(await bitmapToPng(img));
     const tables = await readTables();
@@ -326,7 +392,7 @@ async function runOnce(req) {
     // The guard at the top of the next runOnce awaits this before proceeding. The
     // identity check stops a late finally from nulling a newer run's pending promise.
     if (myGen === runGeneration) {
-      const snap = snapshotWorkspace();
+      const snap = snapshotWorkspace(sessionId);
       pendingWorkspaceSnapshot = snap;
       snap.finally(() => { if (pendingWorkspaceSnapshot === snap) pendingWorkspaceSnapshot = null; });
     }
@@ -352,24 +418,35 @@ window.webrRun = async (id, requestJson) => {
   }
 };
 
-window.webrReset = async (id) => {
+window.webrReset = async (id, sessionId, purge) => {
   try {
     // Wait out any in-flight background snapshot first: otherwise its already-read,
     // pre-reset bytes get streamed to disk AFTER our snapshotDelete, resurrecting
     // exactly what the reset is clearing.
     if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
-    await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())');
-    AndroidBridge.snapshotDelete('workspace'); // a reset must not resurrect vars on next launch
+    // Clear the live globalenv only if this is the live session.
+    if (sessionId === currentSession) {
+      try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); } catch (e) {}
+    }
+    AndroidBridge.snapshotDelete('workspace', sessionId); // must not resurrect vars on next launch
+    if (purge) {
+      AndroidBridge.snapshotDelete('library', sessionId);
+      const lib = libDir(sessionId);
+      try { await webR.evalRVoid(`if (dir.exists(${JSON.stringify(lib)})) unlink(${JSON.stringify(lib)}, recursive = TRUE, force = TRUE)`); } catch (e) {}
+      const i = residentLibs.indexOf(sessionId);
+      if (i >= 0) residentLibs.splice(i, 1);
+      if (sessionId === currentSession) currentSession = null;
+    }
     AndroidBridge.onResult(id, JSON.stringify({ ok: true }));
   } catch (e) { AndroidBridge.onResult(id, JSON.stringify({ ok: false, error: String(e) })); }
 };
 
 // Package management (device-verified). webr::install resolves against the
 // bundled local repo first, then falls back to the online r-wasm CRAN mirror,
-// installing into the lazily-created in-process user library (USER_LIB).
-window.webrInstall = async (id, pkg) => {
+// installing into the active session's user library (libDir(sessionId)).
+window.webrInstall = async (id, pkg, sessionId) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ installed: false, error: 'WebR not ready', stdout: '', stderr: '', timedOut: false, systemRequirements: null })); return; }
-  await ensureUserLib();
+  await ensureSession(sessionId);
   const shelter = await new webR.Shelter();
   try {
     const cap = await shelter.captureR(
@@ -381,7 +458,7 @@ window.webrInstall = async (id, pkg) => {
     const okR = await webR.evalR(`requireNamespace(${JSON.stringify(pkg)}, quietly = TRUE)`);
     const installed = (await okR.toArray())[0] === true;
     webR.destroy(okR);
-    if (installed) await snapshotLibrary(); // persist across restarts
+    if (installed) await snapshotLibrary(sessionId); // persist across restarts
     // On failure, surface the real R stderr (last few lines) instead of a guess —
     // it names the actual cause (e.g. a missing dependency or an unreachable repo).
     const detail = (stderr || stdout || '').split('\n').filter((l) => l.trim()).slice(-6).join('\n');
@@ -395,17 +472,18 @@ window.webrInstall = async (id, pkg) => {
   } finally { shelter.purge(); }
 };
 
-window.webrUninstall = async (id, pkg) => {
+window.webrUninstall = async (id, pkg, sessionId) => {
   try {
-    await ensureUserLib();
+    await ensureSession(sessionId);
+    const lib = libDir(sessionId);
     // A freshly installed package is a MOUNTED FS image, which neither
     // remove.packages nor unlink can delete — it must be FS.unmount'd first.
     // (After an app restart the package is instead plain restored files, so the
     // unmount is a harmless no-op and the unlink below clears the files.)
-    try { await webR.FS.unmount(`${USER_LIB}/${pkg}`); } catch (e) { /* not a mount */ }
+    try { await webR.FS.unmount(`${lib}/${pkg}`); } catch (e) { /* not a mount */ }
     const goneR = await webR.evalR(
       `local({\n` +
-      `  p <- ${JSON.stringify(pkg)}; lib <- ${JSON.stringify(USER_LIB)}; dir <- file.path(lib, p);\n` +
+      `  p <- ${JSON.stringify(pkg)}; lib <- ${JSON.stringify(lib)}; dir <- file.path(lib, p);\n` +
       `  if (dir.exists(dir)) {\n` +
       `    ff <- tryCatch(list.files(dir, recursive = TRUE, all.files = TRUE, full.names = TRUE, include.dirs = TRUE), error = function(e) character(0));\n` +
       `    try(Sys.chmod(c(dir, ff), mode = '0777', use_umask = FALSE), silent = TRUE);\n` +
@@ -426,7 +504,7 @@ window.webrUninstall = async (id, pkg) => {
           `try({ if (p %in% loadedNamespaces()) unloadNamespace(p) }, silent = TRUE) })`
         );
       } catch (e) { /* unload is best-effort */ }
-      await snapshotLibrary(); // persist the removal across restarts
+      await snapshotLibrary(sessionId); // persist the removal across restarts
     }
     AndroidBridge.onResult(id, JSON.stringify({ removed, error: removed ? null : `${pkg} was not removed.` }));
   } catch (e) {
@@ -434,11 +512,11 @@ window.webrUninstall = async (id, pkg) => {
   }
 };
 
-// List only user-installed packages (the USER_LIB), not WebR's built-ins.
-window.webrListPackages = async (id) => {
+// List only the session's user-installed packages, not WebR's built-ins.
+window.webrListPackages = async (id, sessionId) => {
   try {
-    await ensureUserLib();
-    const r = await webR.evalR(`rownames(installed.packages(lib.loc = ${JSON.stringify(USER_LIB)}))`);
+    await ensureSession(sessionId);
+    const r = await webR.evalR(`rownames(installed.packages(lib.loc = ${JSON.stringify(libDir(sessionId))}))`);
     const packages = await r.toArray();
     webR.destroy(r);
     AndroidBridge.onResult(id, JSON.stringify({ packages }));
@@ -453,6 +531,8 @@ window.webrListPackages = async (id) => {
 window.webrPreview = async (id, requestJson) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'WebR not ready', truncated: false })); return; }
   const req = JSON.parse(requestJson);
+  // Object preview reads globalenv(); make the requested project's session live first.
+  await ensureSession(req.sessionId || 'default');
   const shelter = await new webR.Shelter();
   try {
     let rExpr;
