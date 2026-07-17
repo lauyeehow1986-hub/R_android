@@ -20,3 +20,5 @@ Thumbs.db
 
 ## Backend
 backend/*.log
+.env
+backend/.env
