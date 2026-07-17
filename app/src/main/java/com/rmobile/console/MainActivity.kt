@@ -63,6 +63,9 @@ private fun AppRoot() {
             screen = Screen.EDITOR
             // Installing/uninstalling a package changes the session's symbols; refresh.
             editorViewModel.refreshSymbols()
+            // The shared-library toggle lives on the Packages screen (its own ViewModel);
+            // re-sync it so the editor's next run resolves the right library key.
+            editorViewModel.refreshActiveProjectSettings()
         })
         Screen.PROJECTS -> ProjectsScreen(
             viewModel = editorViewModel,

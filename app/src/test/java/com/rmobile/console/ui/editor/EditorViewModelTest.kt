@@ -414,6 +414,28 @@ class EditorViewModelTest {
     }
 
     @Test
+    fun `refreshActiveProjectSettings picks up a shared-library toggle made off-screen`() = runTest {
+        val engine = FakeEngine(ExecuteResponse(stdout = "ok"))
+        val project = ProjectOps.newProject(id = 42, name = "P", now = 0) // sharedLibrary = false
+        val store = InMemoryProjectStore(initial = listOf(project)).apply { lastId = 42 }
+        val vm = viewModel(
+            projects = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { _ -> engine },
+        )
+        advanceUntilIdle()
+
+        // The Packages screen (its own ViewModel) toggles shared-library ON and persists it.
+        store.stored = listOf(project.copy(sharedLibrary = true))
+        vm.refreshActiveProjectSettings()
+
+        vm.onCodeChanged("1")
+        vm.runCode()
+        advanceUntilIdle()
+        assertEquals("shared", engine.lastRequestLibraryKey)
+    }
+
+    @Test
     fun `runCode passes the project's library key`() = runTest {
         val engine = FakeEngine(ExecuteResponse(stdout = "ok"))
         val shared = ProjectOps.newProject(id = 88, name = "S", now = 0).copy(sharedLibrary = true)

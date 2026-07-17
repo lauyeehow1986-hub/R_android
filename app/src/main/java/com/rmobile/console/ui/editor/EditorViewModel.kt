@@ -218,6 +218,18 @@ class EditorViewModel(
         _uiState.update { it.copy(project = updated) }
     }
 
+    /** Re-reads persisted per-project settings that can change off the editor screen
+     *  (currently the shared-library flag, toggled on the Packages screen) for the active
+     *  project, without disturbing in-editor file/code state. Call when returning to the
+     *  editor so the next run resolves the right library key. */
+    fun refreshActiveProjectSettings() {
+        val current = _uiState.value.project
+        val stored = projectStore.loadProjects().firstOrNull { it.id == current.id } ?: return
+        if (stored.sharedLibrary != current.sharedLibrary) {
+            _uiState.update { it.copy(project = it.project.copy(sharedLibrary = stored.sharedLibrary)) }
+        }
+    }
+
     private fun persistProject(project: Project) {
         val updated = ProjectOps.upsert(_uiState.value.projects, project)
         projectStore.persistProjects(updated)
