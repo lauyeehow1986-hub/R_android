@@ -27,6 +27,7 @@ class PreviewViewModel(
     val uiState: StateFlow<PreviewUiState> = _uiState.asStateFlow()
 
     private var session: String = RExecutionRepository.DEFAULT_SESSION_ID
+    private var libraryKey: String = RExecutionRepository.DEFAULT_SESSION_ID
     private var engineChoice: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL
 
     init {
@@ -39,6 +40,7 @@ class PreviewViewModel(
         val active = projects.firstOrNull { it.id == projectStore.loadLastOpenProjectId() }
             ?: projects.firstOrNull()
         session = active?.let { ProjectSession.of(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
+        libraryKey = active?.let { ProjectSession.libraryKey(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
         engineChoice = ExecutionEngineChoice.resolve(active?.engine, defaultEngine())
     }
 
@@ -47,7 +49,7 @@ class PreviewViewModel(
         resolveSession()
         _uiState.value = PreviewUiState(title = name, isLoading = true)
         viewModelScope.launch {
-            engineProvider(engineChoice).preview(PreviewRequest(source, name, session))
+            engineProvider(engineChoice).preview(PreviewRequest(source, name, session), libraryKey)
                 .onSuccess { resp ->
                     _uiState.update {
                         it.copy(

@@ -92,19 +92,29 @@ bundled repo is searched first and the network is the fallback.
   `library` | `workspace`, filenames from `SnapshotNaming`) is the shared transport.
 - **Session swap (`ensureSession`).** WebR is one instance, so each project (a
   `proj-<id>` session) takes turns owning the live `globalenv()` and `.libPaths()`.
-  `ensureSession(sessionId)` is the choke point called at the top of every
-  session-scoped op (run, preview, install/uninstall/list, reset). When the incoming
-  session differs from the live one it **swaps**: `save.image` the outgoing session's
-  workspace, clear `globalenv()`, **unload the outgoing project's `library()`'d
+  `ensureSession(sessionId, libraryKey)` is the choke point called at the top of every
+  session-scoped op (run, preview, install/uninstall/list, reset). It takes **two**
+  keys: the workspace/data swap on `sessionId`, while `.libPaths()`, library residency,
+  the LRU, and the tarball snapshot key on `libraryKey`. For an isolated project the two
+  are equal (`proj-<id>`); a **shared-library** project passes `libraryKey = "shared"`
+  (`SHARED_LIBRARY_KEY`, kept in sync with Kotlin `ProjectSession.SHARED_LIBRARY_KEY`),
+  so opted-in projects share one library while keeping separate workspaces. When the
+  incoming session differs from the live one it **swaps**: `save.image` the outgoing
+  session's workspace, clear `globalenv()`, **unload the outgoing project's `library()`'d
   packages** (`resetPackagesToBase` detaches/unloads everything beyond the base set
   captured at boot — R namespaces load into the one shared process, so this stops a
   package loaded in one project from staying live in another), `load()` the incoming
-  session's workspace, and point `.libPaths()` at its lib dir (restoring the tarball
-  into the VFS if not already resident). A same-session op is a no-op. Like an app
-  restart, a swap does not re-attach the incoming project's packages — user code
-  re-runs `library(...)` (the workspace snapshot stores objects, not the search path). Migration of the pre-per-project shared
-  `webr-workspace.RData` / `webr-library.tar.gz` into the last-open project is a
-  one-time Kotlin file rename (`LegacyLocalStateMigration`) run at startup.
+  session's workspace, and point `.libPaths()` at its library dir (restoring the tarball
+  into the VFS if not already resident). When only the **library key** changes for the
+  same session (a shared-library toggle), it re-points `.libPaths()` and still runs
+  `resetPackagesToBase` so packages from the old library don't linger. A same
+  session+library op is a no-op. Like an app restart, a swap does not re-attach the
+  incoming project's packages — user code re-runs `library(...)` (the workspace snapshot
+  stores objects, not the search path). `webrReset` **never purges a shared library** on
+  a single project's reset/delete (`purge && lib !== SHARED_LIBRARY_KEY`), so deleting one
+  opted-in project can't nuke the packages others rely on. Migration of the
+  pre-per-project shared `webr-workspace.RData` / `webr-library.tar.gz` into the last-open
+  project is a one-time Kotlin file rename (`LegacyLocalStateMigration`) run at startup.
 - **LRU library eviction.** `residentLibs` tracks which session lib dirs are in the
   VFS (use-order); past `MAX_RESIDENT_LIBS` (3) the least-recently-used one is
   unmounted + unlinked (it re-restores from its Kotlin tarball on next visit),

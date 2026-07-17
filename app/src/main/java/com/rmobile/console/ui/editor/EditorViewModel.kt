@@ -165,7 +165,13 @@ class EditorViewModel(
 
     fun deleteProject(id: Long) {
         _uiState.value.projects.firstOrNull { it.id == id }?.let { victim ->
-            viewModelScope.launch { engineFor(victim).reset(ProjectSession.of(victim), purgePackages = true) }
+            viewModelScope.launch {
+                engineFor(victim).reset(
+                    ProjectSession.of(victim),
+                    purgePackages = true,
+                    libraryKey = ProjectSession.libraryKey(victim),
+                )
+            }
         }
         val wasActive = _uiState.value.project.id == id
         var remaining = ProjectOps.delete(_uiState.value.projects, id)
@@ -212,6 +218,18 @@ class EditorViewModel(
         _uiState.update { it.copy(project = updated) }
     }
 
+    /** Re-reads persisted per-project settings that can change off the editor screen
+     *  (currently the shared-library flag, toggled on the Packages screen) for the active
+     *  project, without disturbing in-editor file/code state. Call when returning to the
+     *  editor so the next run resolves the right library key. */
+    fun refreshActiveProjectSettings() {
+        val current = _uiState.value.project
+        val stored = projectStore.loadProjects().firstOrNull { it.id == current.id } ?: return
+        if (stored.sharedLibrary != current.sharedLibrary) {
+            _uiState.update { it.copy(project = it.project.copy(sharedLibrary = stored.sharedLibrary)) }
+        }
+    }
+
     private fun persistProject(project: Project) {
         val updated = ProjectOps.upsert(_uiState.value.projects, project)
         projectStore.persistProjects(updated)
@@ -250,9 +268,10 @@ class EditorViewModel(
     // --- session ---
 
     fun resetSession() {
-        val session = ProjectSession.of(_uiState.value.project)
+        val project = _uiState.value.project
+        val session = ProjectSession.of(project)
         viewModelScope.launch {
-            engineFor(_uiState.value.project).reset(session)
+            engineFor(project).reset(session, libraryKey = ProjectSession.libraryKey(project))
                 .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
                 .onFailure { t -> _uiState.update { it.copy(errorMessage = t.message ?: "Failed to reset the session.") } }
         }
@@ -272,7 +291,7 @@ class EditorViewModel(
         val session = ProjectSession.of(project)
         viewModelScope.launch {
             val request = ExecuteRequest(sessionId = session, files = files, entryFile = project.entryFileName)
-            engineFor(project).execute(request)
+            engineFor(project).execute(request, libraryKey = ProjectSession.libraryKey(project))
                 .onSuccess { response ->
                     _uiState.update {
                         it.copy(

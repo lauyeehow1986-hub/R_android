@@ -480,7 +480,21 @@ projects**. The four session-scoped ViewModels route through
 The Data/Packages screens adapt their caption to the active project's engine (the Data
 screen also warns above 200 MB on Local, since its FS is in-memory).
 
-Still **not** built — don't assume these exist: a per-project **shared-library** opt-in
-(advanced users trading isolation for storage; the `(kind, session)` snapshot keying
-leaves the seam open — pass a fixed key for the library kind), and (backend)
-network-egress restriction in the dev profile or per-request VM isolation.
+Also built: **per-project shared-library opt-in (Local engine)** — a project can trade
+package-library isolation for a library shared across projects (`Project.sharedLibrary`).
+The mechanism decouples a project's **library key** from its **session id**:
+`ProjectSession.libraryKey(project)` is `"shared"` (`SHARED_LIBRARY_KEY`) when opted in,
+else `proj-<id>`; workspace + data stay keyed by the session id, only the package library
+keys on the library key. The Local-relevant `ExecutionEngine` ops carry an optional
+trailing `libraryKey` (Remote ignores it; Local forwards it to `WebRController` →
+`bridge.js`), and `bridge.js` `ensureSession(sessionId, libraryKey)` swaps the workspace on
+the session id while pointing `.libPaths()`/residency/LRU/snapshot on the library key.
+A single project's delete/reset **never purges the shared library**
+(`purge && lib !== SHARED_LIBRARY_KEY`), and `resetPackagesToBase` still runs on every
+swap (and on a same-session library-only toggle) so loaded namespaces don't leak. The
+toggle is a Switch on the Packages screen, shown for Local projects only; switching just
+re-points the library (no package migration), fully reversible. Remote (backend) libraries
+stay per-session isolated — shared libraries are a Local-only concept.
+
+Still **not** built — don't assume these exist: (backend) network-egress restriction in
+the dev profile or per-request VM isolation.

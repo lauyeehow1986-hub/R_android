@@ -90,15 +90,25 @@ class PackagesViewModelTest {
 
     private class FakeEngine(val label: String = "local") : com.rmobile.console.data.execution.ExecutionEngine {
         var installedArg: String? = null
-        override suspend fun execute(request: ExecuteRequest) = Result.success(ExecuteResponse())
-        override suspend fun reset(sessionId: String, purgePackages: Boolean) = Result.success(Unit)
-        override suspend fun listPackages(sessionId: String) = Result.success(PackagesResponse(listOf("$label-pkg")))
-        override suspend fun install(request: InstallRequest): Result<InstallResponse> {
-            installedArg = request.packageName
+        var lastListLibraryKey: String? = null
+        var lastInstallLibraryKey: String? = null
+        var lastUninstallLibraryKey: String? = null
+        override suspend fun execute(request: ExecuteRequest, libraryKey: String?) = Result.success(ExecuteResponse())
+        override suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String?) = Result.success(Unit)
+        override suspend fun listPackages(sessionId: String, libraryKey: String?): Result<PackagesResponse> {
+            lastListLibraryKey = libraryKey
+            return Result.success(PackagesResponse(listOf("$label-pkg")))
+        }
+        override suspend fun install(request: InstallRequest, libraryKey: String?): Result<InstallResponse> {
+            installedArg = request.packageName; lastInstallLibraryKey = libraryKey
             return Result.success(InstallResponse(installed = true))
         }
-        override suspend fun uninstall(request: UninstallRequest) = Result.success(UninstallResponse(removed = true))
-        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) = Result.success(com.rmobile.console.data.model.PreviewResponse())
+        override suspend fun uninstall(request: UninstallRequest, libraryKey: String?): Result<UninstallResponse> {
+            lastUninstallLibraryKey = libraryKey
+            return Result.success(UninstallResponse(removed = true))
+        }
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest, libraryKey: String?) =
+            Result.success(com.rmobile.console.data.model.PreviewResponse())
     }
 
     @Test
@@ -278,5 +288,60 @@ class PackagesViewModelTest {
 
         assertFalse(vm.uiState.value.engineIsLocal)
         assertEquals(listOf("remote-pkg"), vm.uiState.value.installed)
+    }
+
+    @Test
+    fun `list uses the isolated library key by default`() = runTest {
+        val project = ProjectOps.newProject(id = 100, name = "P", now = 0)
+        val store = InMemoryProjectStore(initial = listOf(project), lastId = 100)
+        val engine = FakeEngine()
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(FakeApi()),
+            projectStore = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { engine },
+        )
+        advanceUntilIdle()
+        assertEquals("proj-100", engine.lastListLibraryKey)
+        assertFalse(vm.uiState.value.sharedLibrary)
+    }
+
+    @Test
+    fun `enabling shared library persists the flag and reloads with the shared key`() = runTest {
+        val project = ProjectOps.newProject(id = 100, name = "P", now = 0)
+        val store = InMemoryProjectStore(initial = listOf(project), lastId = 100)
+        val engine = FakeEngine()
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(FakeApi()),
+            projectStore = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { engine },
+        )
+        advanceUntilIdle()
+
+        vm.setSharedLibrary(true)
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.sharedLibrary)
+        assertTrue(store.stored.first { it.id == 100L }.sharedLibrary)   // persisted
+        assertEquals("shared", engine.lastListLibraryKey)                 // reloaded with shared key
+    }
+
+    @Test
+    fun `install and uninstall use the resolved library key`() = runTest {
+        val project = ProjectOps.newProject(id = 7, name = "P", now = 0).copy(sharedLibrary = true)
+        val store = InMemoryProjectStore(initial = listOf(project), lastId = 7)
+        val engine = FakeEngine()
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(FakeApi()),
+            projectStore = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { engine },
+        )
+        advanceUntilIdle()
+        vm.onPackageNameChanged("praise"); vm.install(); advanceUntilIdle()
+        vm.uninstall("praise"); advanceUntilIdle()
+        assertEquals("shared", engine.lastInstallLibraryKey)
+        assertEquals("shared", engine.lastUninstallLibraryKey)
     }
 }

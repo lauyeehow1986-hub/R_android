@@ -17,21 +17,22 @@ import com.rmobile.console.data.model.UninstallResponse
  * workspace chips) is engine-agnostic.
  */
 interface ExecutionEngine {
-    suspend fun execute(request: ExecuteRequest): Result<ExecuteResponse>
-    /** Clears the session's workspace (and its package library when [purgePackages]). */
-    suspend fun reset(sessionId: String, purgePackages: Boolean = false): Result<Unit>
-    suspend fun listPackages(sessionId: String): Result<PackagesResponse>
-    suspend fun install(request: InstallRequest): Result<InstallResponse>
-    suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse>
+    suspend fun execute(request: ExecuteRequest, libraryKey: String? = null): Result<ExecuteResponse>
+    /** Clears the session's workspace (and its package library when [purgePackages]).
+     *  [libraryKey] selects which on-device library to purge; a shared library is never purged. */
+    suspend fun reset(sessionId: String, purgePackages: Boolean = false, libraryKey: String? = null): Result<Unit>
+    suspend fun listPackages(sessionId: String, libraryKey: String? = null): Result<PackagesResponse>
+    suspend fun install(request: InstallRequest, libraryKey: String? = null): Result<InstallResponse>
+    suspend fun uninstall(request: UninstallRequest, libraryKey: String? = null): Result<UninstallResponse>
     /** Read-only preview of a data file or workspace object as a table. */
-    suspend fun preview(request: PreviewRequest): Result<PreviewResponse>
+    suspend fun preview(request: PreviewRequest, libraryKey: String? = null): Result<PreviewResponse>
 }
 
 /** The network backend engine — delegates to the existing repository. */
 class RemoteExecutionEngine(
     private val repository: RExecutionRepository,
 ) : ExecutionEngine {
-    override suspend fun execute(request: ExecuteRequest): Result<ExecuteResponse> {
+    override suspend fun execute(request: ExecuteRequest, libraryKey: String?): Result<ExecuteResponse> {
         val sessionId = request.sessionId ?: RExecutionRepository.DEFAULT_SESSION_ID
         val files = request.files
         return if (files != null) {
@@ -41,18 +42,18 @@ class RemoteExecutionEngine(
         }
     }
 
-    override suspend fun reset(sessionId: String, purgePackages: Boolean): Result<Unit> =
+    override suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String?): Result<Unit> =
         repository.reset(sessionId, purgePackages).map { }
 
-    override suspend fun listPackages(sessionId: String): Result<PackagesResponse> =
+    override suspend fun listPackages(sessionId: String, libraryKey: String?): Result<PackagesResponse> =
         repository.listPackages(sessionId)
 
-    override suspend fun install(request: InstallRequest): Result<InstallResponse> =
+    override suspend fun install(request: InstallRequest, libraryKey: String?): Result<InstallResponse> =
         repository.install(request.packageName, request.sessionId ?: RExecutionRepository.DEFAULT_SESSION_ID)
 
-    override suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse> =
+    override suspend fun uninstall(request: UninstallRequest, libraryKey: String?): Result<UninstallResponse> =
         repository.uninstall(request.packageName, request.sessionId ?: RExecutionRepository.DEFAULT_SESSION_ID)
 
-    override suspend fun preview(request: PreviewRequest): Result<PreviewResponse> =
+    override suspend fun preview(request: PreviewRequest, libraryKey: String?): Result<PreviewResponse> =
         repository.preview(request.source, request.name, request.sessionId ?: RExecutionRepository.DEFAULT_SESSION_ID)
 }

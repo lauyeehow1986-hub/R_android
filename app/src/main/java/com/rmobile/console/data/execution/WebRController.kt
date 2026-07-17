@@ -148,25 +148,25 @@ class WebRController(
         } catch (e: Exception) { "" }
     }
 
-    /** Runs a full ExecuteRequest (as JSON) and returns the bridge's ExecuteResponse JSON. */
-    suspend fun execute(requestJson: String): String =
-        callBridge("window.webrRun", org.json.JSONObject.quote(requestJson))
+    /** Runs a full ExecuteRequest (as JSON) against the given library key. */
+    suspend fun execute(requestJson: String, libraryKey: String): String =
+        callBridge("window.webrRun", org.json.JSONObject.quote(requestJson), org.json.JSONObject.quote(libraryKey))
 
-    /** Clears the given session's workspace (and its package library when [purgePackages]). */
-    suspend fun reset(sessionId: String, purgePackages: Boolean): String =
-        callBridge("window.webrReset", org.json.JSONObject.quote(sessionId), purgePackages.toString())
+    /** Clears the given session's workspace (and its library when [purgePackages], unless shared). */
+    suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String): String =
+        callBridge("window.webrReset", org.json.JSONObject.quote(sessionId), purgePackages.toString(), org.json.JSONObject.quote(libraryKey))
 
-    suspend fun installPackage(pkg: String, sessionId: String): String =
-        callBridge("window.webrInstall", org.json.JSONObject.quote(pkg), org.json.JSONObject.quote(sessionId))
+    suspend fun installPackage(pkg: String, sessionId: String, libraryKey: String): String =
+        callBridge("window.webrInstall", org.json.JSONObject.quote(pkg), org.json.JSONObject.quote(sessionId), org.json.JSONObject.quote(libraryKey))
 
-    suspend fun uninstallPackage(pkg: String, sessionId: String): String =
-        callBridge("window.webrUninstall", org.json.JSONObject.quote(pkg), org.json.JSONObject.quote(sessionId))
+    suspend fun uninstallPackage(pkg: String, sessionId: String, libraryKey: String): String =
+        callBridge("window.webrUninstall", org.json.JSONObject.quote(pkg), org.json.JSONObject.quote(sessionId), org.json.JSONObject.quote(libraryKey))
 
-    suspend fun listPackages(sessionId: String): String =
-        callBridge("window.webrListPackages", org.json.JSONObject.quote(sessionId))
+    suspend fun listPackages(sessionId: String, libraryKey: String): String =
+        callBridge("window.webrListPackages", org.json.JSONObject.quote(sessionId), org.json.JSONObject.quote(libraryKey))
 
-    suspend fun preview(requestJson: String): String =
-        callBridge("window.webrPreview", org.json.JSONObject.quote(requestJson))
+    suspend fun preview(requestJson: String, libraryKey: String): String =
+        callBridge("window.webrPreview", org.json.JSONObject.quote(requestJson), org.json.JSONObject.quote(libraryKey))
 
     /**
      * Invokes a bridge function that takes the result id as its first argument and

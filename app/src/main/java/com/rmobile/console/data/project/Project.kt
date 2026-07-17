@@ -15,6 +15,7 @@ data class Project(
     val entryFileName: String,
     val updatedAt: Long,
     val engine: ExecutionEngineChoice? = null,
+    val sharedLibrary: Boolean = false,
 )
 
 /**

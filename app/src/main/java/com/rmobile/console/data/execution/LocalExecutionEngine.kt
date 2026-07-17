@@ -16,31 +16,33 @@ class LocalExecutionEngine(
     private val controller: WebRController,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : ExecutionEngine {
-    override suspend fun execute(request: ExecuteRequest): Result<ExecuteResponse> = runCatching {
+    override suspend fun execute(request: ExecuteRequest, libraryKey: String?): Result<ExecuteResponse> = runCatching {
+        val session = request.sessionId ?: com.rmobile.console.data.RExecutionRepository.DEFAULT_SESSION_ID
         val requestJson = json.encodeToString(ExecuteRequest.serializer(), request)
-        json.decodeFromString<ExecuteResponse>(controller.execute(requestJson))
+        json.decodeFromString<ExecuteResponse>(controller.execute(requestJson, libraryKey ?: session))
     }
 
-    override suspend fun reset(sessionId: String, purgePackages: Boolean): Result<Unit> = runCatching {
-        controller.reset(sessionId, purgePackages); Unit
+    override suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String?): Result<Unit> = runCatching {
+        controller.reset(sessionId, purgePackages, libraryKey ?: sessionId); Unit
     }
 
-    override suspend fun listPackages(sessionId: String): Result<PackagesResponse> = runCatching {
-        json.decodeFromString<PackagesResponse>(controller.listPackages(sessionId))
+    override suspend fun listPackages(sessionId: String, libraryKey: String?): Result<PackagesResponse> = runCatching {
+        json.decodeFromString<PackagesResponse>(controller.listPackages(sessionId, libraryKey ?: sessionId))
     }
 
-    override suspend fun install(request: InstallRequest): Result<InstallResponse> = runCatching {
+    override suspend fun install(request: InstallRequest, libraryKey: String?): Result<InstallResponse> = runCatching {
         val session = request.sessionId ?: com.rmobile.console.data.RExecutionRepository.DEFAULT_SESSION_ID
-        json.decodeFromString<InstallResponse>(controller.installPackage(request.packageName, session))
+        json.decodeFromString<InstallResponse>(controller.installPackage(request.packageName, session, libraryKey ?: session))
     }
 
-    override suspend fun uninstall(request: UninstallRequest): Result<UninstallResponse> = runCatching {
+    override suspend fun uninstall(request: UninstallRequest, libraryKey: String?): Result<UninstallResponse> = runCatching {
         val session = request.sessionId ?: com.rmobile.console.data.RExecutionRepository.DEFAULT_SESSION_ID
-        json.decodeFromString<UninstallResponse>(controller.uninstallPackage(request.packageName, session))
+        json.decodeFromString<UninstallResponse>(controller.uninstallPackage(request.packageName, session, libraryKey ?: session))
     }
 
-    override suspend fun preview(request: PreviewRequest): Result<PreviewResponse> = runCatching {
+    override suspend fun preview(request: PreviewRequest, libraryKey: String?): Result<PreviewResponse> = runCatching {
+        val session = request.sessionId ?: com.rmobile.console.data.RExecutionRepository.DEFAULT_SESSION_ID
         val reqJson = json.encodeToString(PreviewRequest.serializer(), request)
-        json.decodeFromString<PreviewResponse>(controller.preview(reqJson))
+        json.decodeFromString<PreviewResponse>(controller.preview(reqJson, libraryKey ?: session))
     }
 }
