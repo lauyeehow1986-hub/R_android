@@ -30,3 +30,16 @@ test_that("a real package installs and is usable in a later run", {
   run <- post_execute(srv, "library(praise); cat(is.character(praise()))")
   expect_identical(run$body$stdout, "TRUE")
 })
+
+test_that("a second install in the same session is reported installed", {
+  # Regression: installed.packages() caches per libpath in the long-lived plumber
+  # process, so the first install's listing could hide the second package and make a
+  # genuinely-successful install report installed = FALSE. installed_names() forces a
+  # fresh scan (noCache) at every check, so the second install is reported correctly.
+  srv <- local_server(env = list(R_CRAN_REPO = "https://cloud.r-project.org"))
+  expect_true(api_request(srv, "/install", body = list(package = "praise"))$body$installed)
+  res <- api_request(srv, "/install", body = list(package = "fortunes"))
+  expect_equal(res$status, 200)
+  expect_true(res$body$installed)
+  expect_true(all(c("praise", "fortunes") %in% unlist(api_request(srv, "/packages")$body$packages)))
+})

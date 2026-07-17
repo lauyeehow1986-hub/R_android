@@ -65,6 +65,16 @@ session_paths <- function(session_id) {
   )
 }
 
+# Package names in a library, always scanned fresh. installed.packages() caches per
+# libpath and this plumber process is long-lived, so a cached listing could hide a
+# just-installed package or still show a just-removed one — which made /install and
+# /uninstall (and /packages) mis-report success. noCache forces a real disk scan.
+# Returns character(0) on error or a missing library.
+installed_names <- function(lib) {
+  n <- tryCatch(rownames(installed.packages(lib.loc = lib, noCache = TRUE)), error = function(e) NULL)
+  if (is.null(n)) character(0) else n
+}
+
 # Legacy shared library from before per-session libraries. Read-only source for
 # POST /import-legacy; nothing is installed here anymore.
 LEGACY_PKG_LIB <- Sys.getenv("R_PKG_LIB", "/data/rlib")
@@ -365,7 +375,7 @@ function(req, res) {
                 timedOut = timed_out, installed = FALSE, systemRequirements = NULL))
   }
 
-  installed <- pkg %in% rownames(installed.packages(lib.loc = lib))
+  installed <- pkg %in% installed_names(lib)
 
   sysreqs <- NULL
   if (!installed && requireNamespace("remotes", quietly = TRUE)) {
@@ -395,12 +405,12 @@ function(req, res) {
     return(list(removed = FALSE, error = "Invalid or missing 'package' name."))
   }
   lib <- session_paths(sanitize_session_id(body$sessionId))$rlib
-  before <- pkg %in% rownames(installed.packages(lib.loc = lib))
+  before <- pkg %in% installed_names(lib)
   err <- tryCatch({
     if (before) suppressWarnings(remove.packages(pkg, lib = lib))
     NULL
   }, error = function(e) conditionMessage(e))
-  after <- pkg %in% rownames(installed.packages(lib.loc = lib))
+  after <- pkg %in% installed_names(lib)
   list(removed = before && !after, error = err)
 }
 
@@ -411,13 +421,8 @@ function(req, res) {
   lib <- session_paths(sanitize_session_id(body$sessionId))$rlib
   dir.create(lib, recursive = TRUE, showWarnings = FALSE)
 
-  legacy <- if (dir.exists(LEGACY_PKG_LIB)) {
-    tryCatch(rownames(installed.packages(lib.loc = LEGACY_PKG_LIB)), error = function(e) NULL)
-  } else NULL
-  if (is.null(legacy)) legacy <- character(0)
-
-  present <- tryCatch(rownames(installed.packages(lib.loc = lib)), error = function(e) NULL)
-  if (is.null(present)) present <- character(0)
+  legacy <- if (dir.exists(LEGACY_PKG_LIB)) installed_names(LEGACY_PKG_LIB) else character(0)
+  present <- installed_names(lib)
 
   copied <- character(0)
   for (p in setdiff(legacy, present)) {
@@ -438,12 +443,7 @@ function() {
 #* @get /packages
 function(sessionId = "default") {
   lib <- session_paths(sanitize_session_id(sessionId))$rlib
-  # noCache: installed.packages() caches per libpath, and this plumber process is
-  # long-lived — without noCache a package installed since the first listing can
-  # be missed, so a just-installed package appears absent.
-  pkgs <- tryCatch(rownames(installed.packages(lib.loc = lib, noCache = TRUE)), error = function(e) NULL)
-  if (is.null(pkgs)) pkgs <- character(0)
-  list(packages = as.list(pkgs))
+  list(packages = as.list(installed_names(lib)))
 }
 
 #* Completion symbols for a session: base + recommended + attached-package exports
