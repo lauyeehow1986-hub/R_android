@@ -121,13 +121,16 @@ class EditorViewModelTest {
     private class FakeEngine(val response: com.rmobile.console.data.model.ExecuteResponse) :
         com.rmobile.console.data.execution.ExecutionEngine {
         var lastRequest: com.rmobile.console.data.model.ExecuteRequest? = null
+        var lastRequestLibraryKey: String? = null
         var lastReset: Pair<String, Boolean>? = null
+        var lastResetLibraryKey: String? = null
         override suspend fun execute(request: com.rmobile.console.data.model.ExecuteRequest, libraryKey: String?):
             Result<com.rmobile.console.data.model.ExecuteResponse> {
-            lastRequest = request; return Result.success(response)
+            lastRequest = request; lastRequestLibraryKey = libraryKey; return Result.success(response)
         }
         override suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String?): Result<Unit> {
             lastReset = sessionId to purgePackages
+            lastResetLibraryKey = libraryKey
             return Result.success(Unit)
         }
         override suspend fun listPackages(sessionId: String, libraryKey: String?) = Result.success(com.rmobile.console.data.model.PackagesResponse())
@@ -388,6 +391,43 @@ class EditorViewModelTest {
 
         assertEquals(victimSession to true, remoteEngine.lastReset)
         assertEquals(null, localEngine.lastReset)
+    }
+
+    @Test
+    fun `deleting a shared-library project resets with the shared library key`() = runTest {
+        val engine = FakeEngine(ExecuteResponse(stdout = "x"))
+        val shared = ProjectOps.newProject(id = 55, name = "S", now = 0).copy(sharedLibrary = true)
+        val store = InMemoryProjectStore(initial = listOf(shared)).apply { lastId = 55 }
+        val vm = viewModel(
+            projects = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { _ -> engine },
+        )
+        advanceUntilIdle()
+
+        vm.deleteProject(55L)
+        advanceUntilIdle()
+
+        // App still requests a purge; the bridge is what skips purging a shared library.
+        assertEquals("proj-55" to true, engine.lastReset)
+        assertEquals("shared", engine.lastResetLibraryKey)
+    }
+
+    @Test
+    fun `runCode passes the project's library key`() = runTest {
+        val engine = FakeEngine(ExecuteResponse(stdout = "ok"))
+        val shared = ProjectOps.newProject(id = 88, name = "S", now = 0).copy(sharedLibrary = true)
+        val store = InMemoryProjectStore(initial = listOf(shared)).apply { lastId = 88 }
+        val vm = viewModel(
+            projects = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { _ -> engine },
+        )
+        advanceUntilIdle()
+        vm.onCodeChanged("1")
+        vm.runCode()
+        advanceUntilIdle()
+        assertEquals("shared", engine.lastRequestLibraryKey)
     }
 
     @Test

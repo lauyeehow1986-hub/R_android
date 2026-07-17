@@ -165,7 +165,13 @@ class EditorViewModel(
 
     fun deleteProject(id: Long) {
         _uiState.value.projects.firstOrNull { it.id == id }?.let { victim ->
-            viewModelScope.launch { engineFor(victim).reset(ProjectSession.of(victim), purgePackages = true) }
+            viewModelScope.launch {
+                engineFor(victim).reset(
+                    ProjectSession.of(victim),
+                    purgePackages = true,
+                    libraryKey = ProjectSession.libraryKey(victim),
+                )
+            }
         }
         val wasActive = _uiState.value.project.id == id
         var remaining = ProjectOps.delete(_uiState.value.projects, id)
@@ -250,9 +256,10 @@ class EditorViewModel(
     // --- session ---
 
     fun resetSession() {
-        val session = ProjectSession.of(_uiState.value.project)
+        val project = _uiState.value.project
+        val session = ProjectSession.of(project)
         viewModelScope.launch {
-            engineFor(_uiState.value.project).reset(session)
+            engineFor(project).reset(session, libraryKey = ProjectSession.libraryKey(project))
                 .onSuccess { _uiState.update { it.copy(workspaceObjects = emptyList()) } }
                 .onFailure { t -> _uiState.update { it.copy(errorMessage = t.message ?: "Failed to reset the session.") } }
         }
@@ -272,7 +279,7 @@ class EditorViewModel(
         val session = ProjectSession.of(project)
         viewModelScope.launch {
             val request = ExecuteRequest(sessionId = session, files = files, entryFile = project.entryFileName)
-            engineFor(project).execute(request)
+            engineFor(project).execute(request, libraryKey = ProjectSession.libraryKey(project))
                 .onSuccess { response ->
                     _uiState.update {
                         it.copy(
