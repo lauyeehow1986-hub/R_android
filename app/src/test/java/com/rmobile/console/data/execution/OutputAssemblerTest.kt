@@ -52,10 +52,18 @@ class OutputAssemblerTest {
     }
 
     @Test
-    fun `clean stdout has no sentinel bytes`() {
+    fun `markers are wrapped in STX and ETX control chars`() {
+        assertEquals("\u0002RMOBILE:PLOT\u0003", OutputAssembler.PLOT_MARKER)
+        assertEquals("\u0002RMOBILE:TABLE\u0003", OutputAssembler.TABLE_MARKER)
+    }
+
+    @Test
+    fun `clean stdout has no sentinel control bytes`() {
         val r = OutputAssembler.assemble("a${P}b${T}c", listOf("PNG"), listOf(table(1)))
-        assertFalse(r.cleanStdout.contains(P))
-        assertFalse(r.cleanStdout.contains(T))
+        val stx = ""
+        val etx = ""
+        assertFalse(r.cleanStdout.contains(stx))
+        assertFalse(r.cleanStdout.contains(etx))
         assertEquals("abc", r.cleanStdout)
     }
 }

@@ -1,4 +1,4 @@
-package com.rmobile.console.data.execution
+﻿package com.rmobile.console.data.execution
 
 import com.rmobile.console.data.model.RTable
 
@@ -25,8 +25,8 @@ data class AssembledOutput(
  * Change all three together.
  */
 object OutputAssembler {
-    const val PLOT_MARKER = "RMOBILE:PLOT"
-    const val TABLE_MARKER = "RMOBILE:TABLE"
+    const val PLOT_MARKER = "RMOBILE:PLOT"
+    const val TABLE_MARKER = "RMOBILE:TABLE"
 
     fun assemble(
         stdoutWithMarkers: String,
