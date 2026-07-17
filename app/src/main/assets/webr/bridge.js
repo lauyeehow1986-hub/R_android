@@ -488,15 +488,18 @@ window.webrReset = async (id, sessionId, purge, libraryKey) => {
       const i = residentLibs.indexOf(lib);
       if (i >= 0) residentLibs.splice(i, 1);
       if (lib === currentLibraryKey) currentLibraryKey = null;
-      if (sessionId === currentSession) currentSession = null;
     }
+    // Drop the live-session pointer on any purge (project delete), incl. a shared-library
+    // project whose library we intentionally kept — so the next op re-inits cleanly.
+    if (purge && sessionId === currentSession) currentSession = null;
     AndroidBridge.onResult(id, JSON.stringify({ ok: true }));
   } catch (e) { AndroidBridge.onResult(id, JSON.stringify({ ok: false, error: String(e) })); }
 };
 
 // Package management (device-verified). webr::install resolves against the
 // bundled local repo first, then falls back to the online r-wasm CRAN mirror,
-// installing into the active session's user library (libDir(sessionId)).
+// installing into the active library (libDir(lib), where lib is the project's
+// library key — its own session, or "shared" when it opted into a shared library).
 window.webrInstall = async (id, pkg, sessionId, libraryKey) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ installed: false, error: 'WebR not ready', stdout: '', stderr: '', timedOut: false, systemRequirements: null })); return; }
   const lib = libraryKey || sessionId;
