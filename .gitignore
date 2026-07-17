@@ -22,3 +22,8 @@ Thumbs.db
 backend/*.log
 .env
 backend/.env
+
+## Release signing (never commit keystores or their passwords)
+keystore.properties
+*.jks
+*.keystore

@@ -1,8 +1,20 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Release signing is opt-in and secret-free in the repo: it reads a gitignored
+// keystore.properties at the repo root (storeFile / storePassword / keyAlias /
+// keyPassword). Absent that file, release builds stay unsigned — so debug builds
+// and CI that don't need a signed artifact are unaffected. See README "Releasing".
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -24,10 +36,31 @@ android {
         buildConfigField("String", "R_EXECUTION_BASE_URL", "\"$baseUrl\"")
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = keystoreProperties.getProperty("storeFile")
+            if (storeFilePath != null) {
+                storeFile = rootProject.file(storeFilePath)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = true
+            // Code shrinking is intentionally OFF. The app relies on
+            // kotlinx.serialization models and a WebR @JavascriptInterface bridge
+            // (WebRController) that R8 can silently strip/rename without exhaustive
+            // keep rules; the APK size is dominated by the bundled WebR WASM assets,
+            // which R8 doesn't shrink anyway. So minifying is all risk, no payoff for
+            // a distributable build. Re-enable only with verified keep rules.
+            isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

@@ -1,0 +1,71 @@
+name: Release APK
+
+# Publishes a signed release APK to a GitHub Release when you push a version tag
+# (e.g. `git tag v0.1.0 && git push origin v0.1.0`), or when run manually.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   KEYSTORE_BASE64    - your release keystore (.jks), base64-encoded
+#   KEYSTORE_PASSWORD  - the keystore (store) password
+#   KEY_ALIAS          - the key alias inside the keystore
+#   KEY_PASSWORD       - the key password
+# See README "Releasing" for how to generate the keystore and encode it.
+#
+# No backend URL or API key is ever baked into the build — those live only in each
+# user's in-app Settings, so the released APK ships credential-free.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+
+      - name: Write keystore.properties
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cat > keystore.properties <<EOF
+          storeFile=release.jks
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+
+      - name: Build signed release APK
+        run: ./gradlew :app:assembleRelease
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            app/build/outputs/apk/release/app-release.apk \
+            --title "$TAG" \
+            --generate-notes
