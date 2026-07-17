@@ -8,6 +8,7 @@ const webR = new WebR({ baseUrl });
 let ready = false;
 const LOCAL_REPO_URL = new URL('./repo', document.baseURI).href;
 const USER_LIB_ROOT = '/rmobile/library';           // per-session libs live at <root>/<session>
+const SHARED_LIBRARY_KEY = 'shared';                 // kept in sync with Kotlin ProjectSession.SHARED_LIBRARY_KEY
 const SNAP_TARBALL = '/rmobile/lib.tar';             // scratch path for a lib tar
 const SNAP_CHUNK = 512 * 1024;
 const WS_RDATA = '/rmobile/workspace.RData';         // scratch path for a workspace blob
@@ -15,6 +16,7 @@ const WS_MAX_BYTES = 200 * 1024 * 1024;
 const MAX_RESIDENT_LIBS = 3;                         // LRU cap on lib dirs kept in the VFS
 
 let currentSession = null;                           // the session whose state is live
+let currentLibraryKey = null;                        // which library dir .libPaths currently points at
 let baseLibPaths = null;                             // pristine .libPaths() captured at boot
 let pendingWorkspaceSnapshot = null;                 // in-flight background save.image
 let runGeneration = 0;                               // bumped per run so a timed-out zombie run won't snapshot late
@@ -220,28 +222,39 @@ async function resetPackagesToBase() {
   } catch (e) { /* best-effort — never blocks a swap */ }
 }
 
-// Make sessionId the live session: swap the workspace out/in and point .libPaths at
-// its lib. A no-op when it is already current. Best-effort throughout; a failed
-// restore records lastSwapWarning (surfaced into the run's stderr) but never throws.
-async function ensureSession(sessionId) {
-  if (sessionId === currentSession) return;
+// Make sessionId the live session, pointing the library at libraryKey (which is the
+// session id for an isolated project, or "shared" for an opted-in one). Workspace/data
+// swap on the session id; the library dir re-points on the library key. A no-op when
+// both already match. Best-effort throughout; a failed restore records lastSwapWarning
+// (surfaced into the run's stderr) but never throws.
+async function ensureSession(sessionId, libraryKey) {
+  const lib = libraryKey || sessionId;
+  if (sessionId === currentSession && lib === currentLibraryKey) return;
   if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
+  const sessionChanged = sessionId !== currentSession;
   try {
-    if (currentSession != null) {
-      AndroidBridge.onSwapProgress('SAVING_WORKSPACE');
-      await snapshotWorkspace(currentSession);
-      try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); } catch (e) {}
-      await resetPackagesToBase(); // don't let the outgoing project's library()'d packages leak
+    if (sessionChanged) {
+      if (currentSession != null) {
+        AndroidBridge.onSwapProgress('SAVING_WORKSPACE');
+        await snapshotWorkspace(currentSession);
+        try { await webR.evalRVoid('rm(list = ls(globalenv()), envir = globalenv())'); } catch (e) {}
+        await resetPackagesToBase(); // don't let the outgoing project's library()'d packages leak
+      }
+      AndroidBridge.onSwapProgress('LOADING_WORKSPACE');
+      const ok = await restoreWorkspace(sessionId);
+      if (!ok) { lastSwapWarning = "Couldn't load this project's saved workspace; starting empty."; AndroidBridge.onSwapProgress('RESTORE_FAILED'); }
+      else { lastSwapWarning = ''; }
+    } else if (lib !== currentLibraryKey) {
+      // Same project, library pointer changed (an opt-in toggle). Unload packages loaded
+      // from the old library so they don't linger against the new one.
+      await resetPackagesToBase();
     }
-    AndroidBridge.onSwapProgress('LOADING_WORKSPACE');
-    const ok = await restoreWorkspace(sessionId);
-    if (!ok) { lastSwapWarning = "Couldn't load this project's saved workspace; starting empty."; AndroidBridge.onSwapProgress('RESTORE_FAILED'); }
-    else { lastSwapWarning = ''; }
     AndroidBridge.onSwapProgress('RESTORING_LIBRARY');
-    await ensureLibResident(sessionId);
-    await ensureUserLib(sessionId);
+    await ensureLibResident(lib);
+    await ensureUserLib(lib);
     currentSession = sessionId;
-    await evictLibsIfOverCap(sessionId);
+    currentLibraryKey = lib;
+    await evictLibsIfOverCap(lib);
   } finally {
     AndroidBridge.onSwapProgress('IDLE');
   }
@@ -366,7 +379,7 @@ async function resetRunDir() {
   await webR.evalRVoid('unlink("/rmobile/run", recursive = TRUE); dir.create("/rmobile/run"); setwd("/rmobile/run")');
 }
 
-async function runOnce(req) {
+async function runOnce(req, libraryKey) {
   // Tag this run. A run that "timed out" (its Promise.race branch lost) is never
   // cancelled and may still finish later; the tag lets it detect it is no longer the
   // current run and skip snapshotting.
@@ -376,7 +389,7 @@ async function runOnce(req) {
   if (pendingWorkspaceSnapshot) { try { await pendingWorkspaceSnapshot; } catch (e) {} }
   // Make this project's session live (swaps workspace + library if it changed).
   const sessionId = req.sessionId || 'default';
-  await ensureSession(sessionId);
+  await ensureSession(sessionId, libraryKey || sessionId);
   await resetRunDir();
   let skippedData = [];
   if (req.sessionId) { try { skippedData = await syncData(req.sessionId); } catch (e) {} }
@@ -436,7 +449,7 @@ async function runOnce(req) {
   } finally { shelter.purge(); }
 }
 
-window.webrRun = async (id, requestJson) => {
+window.webrRun = async (id, requestJson, libraryKey) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ error: 'WebR not ready', timedOut: false })); return; }
   const req = JSON.parse(requestJson);
   const timeoutMs = (req.timeoutSeconds || 20) * 1000;
@@ -445,7 +458,7 @@ window.webrRun = async (id, requestJson) => {
     timer = setTimeout(async () => { try { await webR.interrupt(); } catch {} resolve({ stdout: '', stderr: '', plots: [], tables: [], workspaceObjects: null, error: `Execution timed out after ${req.timeoutSeconds || 20}s.`, timedOut: true }); }, timeoutMs);
   });
   try {
-    const result = await Promise.race([runOnce(req), timeout]);
+    const result = await Promise.race([runOnce(req, libraryKey), timeout]);
     clearTimeout(timer);
     AndroidBridge.onResult(id, JSON.stringify(result));
   } catch (e) {
@@ -454,7 +467,8 @@ window.webrRun = async (id, requestJson) => {
   }
 };
 
-window.webrReset = async (id, sessionId, purge) => {
+window.webrReset = async (id, sessionId, purge, libraryKey) => {
+  const lib = libraryKey || sessionId;
   try {
     // Wait out any in-flight background snapshot first: otherwise its already-read,
     // pre-reset bytes get streamed to disk AFTER our snapshotDelete, resurrecting
@@ -466,12 +480,14 @@ window.webrReset = async (id, sessionId, purge) => {
       await resetPackagesToBase();
     }
     AndroidBridge.snapshotDelete('workspace', sessionId); // must not resurrect vars on next launch
-    if (purge) {
-      AndroidBridge.snapshotDelete('library', sessionId);
-      const lib = libDir(sessionId);
-      try { await webR.evalRVoid(`if (dir.exists(${JSON.stringify(lib)})) unlink(${JSON.stringify(lib)}, recursive = TRUE, force = TRUE)`); } catch (e) {}
-      const i = residentLibs.indexOf(sessionId);
+    // Never purge a shared library on a single project's reset/delete — other projects use it.
+    if (purge && lib !== SHARED_LIBRARY_KEY) {
+      AndroidBridge.snapshotDelete('library', lib);
+      const libd = libDir(lib);
+      try { await webR.evalRVoid(`if (dir.exists(${JSON.stringify(libd)})) unlink(${JSON.stringify(libd)}, recursive = TRUE, force = TRUE)`); } catch (e) {}
+      const i = residentLibs.indexOf(lib);
       if (i >= 0) residentLibs.splice(i, 1);
+      if (lib === currentLibraryKey) currentLibraryKey = null;
       if (sessionId === currentSession) currentSession = null;
     }
     AndroidBridge.onResult(id, JSON.stringify({ ok: true }));
@@ -481,9 +497,10 @@ window.webrReset = async (id, sessionId, purge) => {
 // Package management (device-verified). webr::install resolves against the
 // bundled local repo first, then falls back to the online r-wasm CRAN mirror,
 // installing into the active session's user library (libDir(sessionId)).
-window.webrInstall = async (id, pkg, sessionId) => {
+window.webrInstall = async (id, pkg, sessionId, libraryKey) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ installed: false, error: 'WebR not ready', stdout: '', stderr: '', timedOut: false, systemRequirements: null })); return; }
-  await ensureSession(sessionId);
+  const lib = libraryKey || sessionId;
+  await ensureSession(sessionId, lib);
   const shelter = await new webR.Shelter();
   try {
     const cap = await shelter.captureR(
@@ -495,7 +512,7 @@ window.webrInstall = async (id, pkg, sessionId) => {
     const okR = await webR.evalR(`requireNamespace(${JSON.stringify(pkg)}, quietly = TRUE)`);
     const installed = (await okR.toArray())[0] === true;
     webR.destroy(okR);
-    if (installed) await snapshotLibrary(sessionId); // persist across restarts
+    if (installed) await snapshotLibrary(lib); // persist across restarts
     // On failure, surface the real R stderr (last few lines) instead of a guess —
     // it names the actual cause (e.g. a missing dependency or an unreachable repo).
     const detail = (stderr || stdout || '').split('\n').filter((l) => l.trim()).slice(-6).join('\n');
@@ -509,10 +526,11 @@ window.webrInstall = async (id, pkg, sessionId) => {
   } finally { shelter.purge(); }
 };
 
-window.webrUninstall = async (id, pkg, sessionId) => {
+window.webrUninstall = async (id, pkg, sessionId, libraryKey) => {
   try {
-    await ensureSession(sessionId);
-    const lib = libDir(sessionId);
+    const libKey = libraryKey || sessionId;
+    await ensureSession(sessionId, libKey);
+    const lib = libDir(libKey);
     // A freshly installed package is a MOUNTED FS image, which neither
     // remove.packages nor unlink can delete — it must be FS.unmount'd first.
     // (After an app restart the package is instead plain restored files, so the
@@ -541,7 +559,7 @@ window.webrUninstall = async (id, pkg, sessionId) => {
           `try({ if (p %in% loadedNamespaces()) unloadNamespace(p) }, silent = TRUE) })`
         );
       } catch (e) { /* unload is best-effort */ }
-      await snapshotLibrary(sessionId); // persist the removal across restarts
+      await snapshotLibrary(libKey); // persist the removal across restarts
     }
     AndroidBridge.onResult(id, JSON.stringify({ removed, error: removed ? null : `${pkg} was not removed.` }));
   } catch (e) {
@@ -550,10 +568,11 @@ window.webrUninstall = async (id, pkg, sessionId) => {
 };
 
 // List only the session's user-installed packages, not WebR's built-ins.
-window.webrListPackages = async (id, sessionId) => {
+window.webrListPackages = async (id, sessionId, libraryKey) => {
   try {
-    await ensureSession(sessionId);
-    const r = await webR.evalR(`rownames(installed.packages(lib.loc = ${JSON.stringify(libDir(sessionId))}))`);
+    const lib = libraryKey || sessionId;
+    await ensureSession(sessionId, lib);
+    const r = await webR.evalR(`rownames(installed.packages(lib.loc = ${JSON.stringify(libDir(lib))}))`);
     const packages = await r.toArray();
     webR.destroy(r);
     AndroidBridge.onResult(id, JSON.stringify({ packages }));
@@ -565,11 +584,12 @@ window.webrListPackages = async (id, sessionId) => {
 // Read-only preview: render an on-device data file or a workspace object as one
 // RTable (capped at 200 rows), without mutating the session. Mirrors the backend
 // /preview endpoint's file/object handling for the Local engine.
-window.webrPreview = async (id, requestJson) => {
+window.webrPreview = async (id, requestJson, libraryKey) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ table: null, error: 'WebR not ready', truncated: false })); return; }
   const req = JSON.parse(requestJson);
   // Object preview reads globalenv(); make the requested project's session live first.
-  await ensureSession(req.sessionId || 'default');
+  const sessionId = req.sessionId || 'default';
+  await ensureSession(sessionId, libraryKey || sessionId);
   const shelter = await new webR.Shelter();
   try {
     let rExpr;
