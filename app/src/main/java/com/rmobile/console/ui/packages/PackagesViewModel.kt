@@ -9,6 +9,8 @@ import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.UninstallRequest
 import com.rmobile.console.data.network.NetworkModule
+import com.rmobile.console.data.project.Project
+import com.rmobile.console.data.project.ProjectOps
 import com.rmobile.console.data.project.ProjectSession
 import com.rmobile.console.data.project.ProjectStore
 import com.rmobile.console.data.settings.ExecutionEngineChoice
@@ -31,6 +33,8 @@ class PackagesViewModel(
 
     private var session: String = RExecutionRepository.DEFAULT_SESSION_ID
     private var engineChoice: ExecutionEngineChoice = ExecutionEngineChoice.LOCAL
+    private var activeProject: Project? = null
+    private var libraryKey: String = RExecutionRepository.DEFAULT_SESSION_ID
 
     init {
         resolveContext()
@@ -48,9 +52,17 @@ class PackagesViewModel(
         val projects = projectStore.loadProjects()
         val active = projects.firstOrNull { it.id == projectStore.loadLastOpenProjectId() }
             ?: projects.firstOrNull()
+        activeProject = active
         session = active?.let { ProjectSession.of(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
+        libraryKey = active?.let { ProjectSession.libraryKey(it) } ?: RExecutionRepository.DEFAULT_SESSION_ID
         engineChoice = ExecutionEngineChoice.resolve(active?.engine, defaultEngine())
-        _uiState.update { it.copy(projectName = active?.name ?: "", engineIsLocal = engineChoice == ExecutionEngineChoice.LOCAL) }
+        _uiState.update {
+            it.copy(
+                projectName = active?.name ?: "",
+                engineIsLocal = engineChoice == ExecutionEngineChoice.LOCAL,
+                sharedLibrary = active?.sharedLibrary ?: false,
+            )
+        }
     }
 
     /** Call when the Packages screen becomes visible: re-resolve engine/session and reload the list. */
@@ -66,7 +78,7 @@ class PackagesViewModel(
     /** Reloads the installed-package list; leaves it unchanged on failure. */
     fun refresh() {
         viewModelScope.launch {
-            engineProvider(engineChoice).listPackages(session).onSuccess { response ->
+            engineProvider(engineChoice).listPackages(session, libraryKey).onSuccess { response ->
                 _uiState.update { it.copy(installed = response.packages) }
             }
         }
@@ -78,7 +90,7 @@ class PackagesViewModel(
 
         _uiState.update { it.copy(installing = true, message = null, log = "", isError = false) }
         viewModelScope.launch {
-            engineProvider(engineChoice).install(InstallRequest(pkg, session))
+            engineProvider(engineChoice).install(InstallRequest(pkg, session), libraryKey)
                 .onSuccess { response ->
                     val log = listOf(response.stdout, response.stderr)
                         .filter { it.isNotBlank() }
@@ -109,7 +121,7 @@ class PackagesViewModel(
     /** Uninstalls a package from the active project's library, then refreshes the list. */
     fun uninstall(packageName: String) {
         viewModelScope.launch {
-            engineProvider(engineChoice).uninstall(UninstallRequest(packageName, session))
+            engineProvider(engineChoice).uninstall(UninstallRequest(packageName, session), libraryKey)
                 .onSuccess { response ->
                     if (response.removed) {
                         _uiState.update { it.copy(isError = false, message = "Removed $packageName.") }
@@ -124,6 +136,19 @@ class PackagesViewModel(
                     _uiState.update { it.copy(isError = true, message = throwable.message ?: "Uninstall failed.") }
                 }
         }
+    }
+
+    /** Opts the active project into (or out of) the shared package library. Persists the
+     *  flag, re-resolves the library key, and reloads the list to reflect the new library. */
+    fun setSharedLibrary(shared: Boolean) {
+        val current = activeProject ?: return
+        if (current.sharedLibrary == shared) return
+        val updated = current.copy(sharedLibrary = shared)
+        projectStore.persistProjects(ProjectOps.upsert(projectStore.loadProjects(), updated))
+        activeProject = updated
+        libraryKey = ProjectSession.libraryKey(updated)
+        _uiState.update { it.copy(sharedLibrary = shared) }
+        refresh()
     }
 
     fun importLegacy() {

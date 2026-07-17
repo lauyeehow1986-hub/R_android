@@ -11,5 +11,6 @@ data class PackagesUiState(
     val isError: Boolean = false,
     val projectName: String = "",
     val engineIsLocal: Boolean = false,
+    val sharedLibrary: Boolean = false,
     val swapPhase: SwapPhase = SwapPhase.IDLE,
 )

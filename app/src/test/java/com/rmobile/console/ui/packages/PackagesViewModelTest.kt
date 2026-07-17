@@ -289,4 +289,59 @@ class PackagesViewModelTest {
         assertFalse(vm.uiState.value.engineIsLocal)
         assertEquals(listOf("remote-pkg"), vm.uiState.value.installed)
     }
+
+    @Test
+    fun `list uses the isolated library key by default`() = runTest {
+        val project = ProjectOps.newProject(id = 100, name = "P", now = 0)
+        val store = InMemoryProjectStore(initial = listOf(project), lastId = 100)
+        val engine = FakeEngine()
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(FakeApi()),
+            projectStore = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { engine },
+        )
+        advanceUntilIdle()
+        assertEquals("proj-100", engine.lastListLibraryKey)
+        assertFalse(vm.uiState.value.sharedLibrary)
+    }
+
+    @Test
+    fun `enabling shared library persists the flag and reloads with the shared key`() = runTest {
+        val project = ProjectOps.newProject(id = 100, name = "P", now = 0)
+        val store = InMemoryProjectStore(initial = listOf(project), lastId = 100)
+        val engine = FakeEngine()
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(FakeApi()),
+            projectStore = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { engine },
+        )
+        advanceUntilIdle()
+
+        vm.setSharedLibrary(true)
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.sharedLibrary)
+        assertTrue(store.stored.first { it.id == 100L }.sharedLibrary)   // persisted
+        assertEquals("shared", engine.lastListLibraryKey)                 // reloaded with shared key
+    }
+
+    @Test
+    fun `install and uninstall use the resolved library key`() = runTest {
+        val project = ProjectOps.newProject(id = 7, name = "P", now = 0).copy(sharedLibrary = true)
+        val store = InMemoryProjectStore(initial = listOf(project), lastId = 7)
+        val engine = FakeEngine()
+        val vm = PackagesViewModel(
+            repository = RExecutionRepository(FakeApi()),
+            projectStore = store,
+            defaultEngine = { ExecutionEngineChoice.LOCAL },
+            engineProvider = { engine },
+        )
+        advanceUntilIdle()
+        vm.onPackageNameChanged("praise"); vm.install(); advanceUntilIdle()
+        vm.uninstall("praise"); advanceUntilIdle()
+        assertEquals("shared", engine.lastInstallLibraryKey)
+        assertEquals("shared", engine.lastUninstallLibraryKey)
+    }
 }
