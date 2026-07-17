@@ -90,15 +90,25 @@ class PackagesViewModelTest {
 
     private class FakeEngine(val label: String = "local") : com.rmobile.console.data.execution.ExecutionEngine {
         var installedArg: String? = null
-        override suspend fun execute(request: ExecuteRequest) = Result.success(ExecuteResponse())
-        override suspend fun reset(sessionId: String, purgePackages: Boolean) = Result.success(Unit)
-        override suspend fun listPackages(sessionId: String) = Result.success(PackagesResponse(listOf("$label-pkg")))
-        override suspend fun install(request: InstallRequest): Result<InstallResponse> {
-            installedArg = request.packageName
+        var lastListLibraryKey: String? = null
+        var lastInstallLibraryKey: String? = null
+        var lastUninstallLibraryKey: String? = null
+        override suspend fun execute(request: ExecuteRequest, libraryKey: String?) = Result.success(ExecuteResponse())
+        override suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String?) = Result.success(Unit)
+        override suspend fun listPackages(sessionId: String, libraryKey: String?): Result<PackagesResponse> {
+            lastListLibraryKey = libraryKey
+            return Result.success(PackagesResponse(listOf("$label-pkg")))
+        }
+        override suspend fun install(request: InstallRequest, libraryKey: String?): Result<InstallResponse> {
+            installedArg = request.packageName; lastInstallLibraryKey = libraryKey
             return Result.success(InstallResponse(installed = true))
         }
-        override suspend fun uninstall(request: UninstallRequest) = Result.success(UninstallResponse(removed = true))
-        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) = Result.success(com.rmobile.console.data.model.PreviewResponse())
+        override suspend fun uninstall(request: UninstallRequest, libraryKey: String?): Result<UninstallResponse> {
+            lastUninstallLibraryKey = libraryKey
+            return Result.success(UninstallResponse(removed = true))
+        }
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest, libraryKey: String?) =
+            Result.success(com.rmobile.console.data.model.PreviewResponse())
     }
 
     @Test

@@ -133,12 +133,12 @@ class PreviewViewModelTest {
 
     private class FakeEngine : com.rmobile.console.data.execution.ExecutionEngine {
         var lastRequest: PreviewRequest? = null
-        override suspend fun execute(request: ExecuteRequest) = Result.success(ExecuteResponse())
-        override suspend fun reset(sessionId: String, purgePackages: Boolean) = Result.success(Unit)
-        override suspend fun listPackages(sessionId: String) = Result.success(PackagesResponse())
-        override suspend fun install(request: InstallRequest) = Result.success(InstallResponse())
-        override suspend fun uninstall(request: UninstallRequest) = Result.success(UninstallResponse())
-        override suspend fun preview(request: PreviewRequest): Result<PreviewResponse> {
+        override suspend fun execute(request: ExecuteRequest, libraryKey: String?) = Result.success(ExecuteResponse())
+        override suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String?) = Result.success(Unit)
+        override suspend fun listPackages(sessionId: String, libraryKey: String?) = Result.success(PackagesResponse())
+        override suspend fun install(request: InstallRequest, libraryKey: String?) = Result.success(InstallResponse())
+        override suspend fun uninstall(request: UninstallRequest, libraryKey: String?) = Result.success(UninstallResponse())
+        override suspend fun preview(request: PreviewRequest, libraryKey: String?): Result<PreviewResponse> {
             lastRequest = request
             return Result.success(PreviewResponse(table = RTable(columns = listOf("x"), totalRows = 1)))
         }

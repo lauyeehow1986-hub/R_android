@@ -122,18 +122,18 @@ class EditorViewModelTest {
         com.rmobile.console.data.execution.ExecutionEngine {
         var lastRequest: com.rmobile.console.data.model.ExecuteRequest? = null
         var lastReset: Pair<String, Boolean>? = null
-        override suspend fun execute(request: com.rmobile.console.data.model.ExecuteRequest):
+        override suspend fun execute(request: com.rmobile.console.data.model.ExecuteRequest, libraryKey: String?):
             Result<com.rmobile.console.data.model.ExecuteResponse> {
             lastRequest = request; return Result.success(response)
         }
-        override suspend fun reset(sessionId: String, purgePackages: Boolean): Result<Unit> {
+        override suspend fun reset(sessionId: String, purgePackages: Boolean, libraryKey: String?): Result<Unit> {
             lastReset = sessionId to purgePackages
             return Result.success(Unit)
         }
-        override suspend fun listPackages(sessionId: String) = Result.success(com.rmobile.console.data.model.PackagesResponse())
-        override suspend fun install(request: com.rmobile.console.data.model.InstallRequest) = Result.success(com.rmobile.console.data.model.InstallResponse())
-        override suspend fun uninstall(request: com.rmobile.console.data.model.UninstallRequest) = Result.success(com.rmobile.console.data.model.UninstallResponse())
-        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest) = Result.success(com.rmobile.console.data.model.PreviewResponse())
+        override suspend fun listPackages(sessionId: String, libraryKey: String?) = Result.success(com.rmobile.console.data.model.PackagesResponse())
+        override suspend fun install(request: com.rmobile.console.data.model.InstallRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.InstallResponse())
+        override suspend fun uninstall(request: com.rmobile.console.data.model.UninstallRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.UninstallResponse())
+        override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.PreviewResponse())
     }
 
     @Test
