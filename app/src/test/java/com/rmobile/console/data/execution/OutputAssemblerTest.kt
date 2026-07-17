@@ -66,4 +66,20 @@ class OutputAssemblerTest {
         assertFalse(r.cleanStdout.contains(etx))
         assertEquals("abc", r.cleanStdout)
     }
+
+    @Test
+    fun `two plots with matching count are ordered`() {
+        val r = OutputAssembler.assemble("${P}a${P}b", listOf("P1", "P2"), emptyList())
+        assertTrue(r.ordered)
+        assertEquals(
+            listOf(OutputChunk.Plot("P1"), OutputChunk.Text("a"), OutputChunk.Plot("P2"), OutputChunk.Text("b")),
+            r.chunks,
+        )
+    }
+
+    @Test
+    fun `table overflow falls back`() {
+        val r = OutputAssembler.assemble("$T$T", emptyList(), listOf(table(1)))
+        assertFalse(r.ordered)
+    }
 }
