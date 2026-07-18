@@ -565,4 +565,19 @@ class EditorViewModelTest {
         advanceUntilIdle()
         assertEquals("\"sales.csv\"", vm.uiState.value.code)
     }
+
+    @Test
+    fun `runCode assembles ordered output from stdout markers`() {
+        val md = com.rmobile.console.data.execution.OutputAssembler.PLOT_MARKER + "done\n"
+        val engine = FakeEngine(ExecuteResponse(stdout = md, plots = listOf("PNG"), tables = emptyList()))
+        val vm = viewModel(engineProvider = { _ -> engine })
+        vm.onCodeChanged("plot(cars); cat('done')")
+        vm.runCode()
+        val s = vm.uiState.value
+        assertTrue(s.outputOrdered)
+        assertEquals("done\n", s.stdout)
+        assertEquals(2, s.output.size)
+        assertTrue(s.output[0] is com.rmobile.console.data.execution.OutputChunk.Plot)
+        assertTrue(s.output[1] is com.rmobile.console.data.execution.OutputChunk.Text)
+    }
 }
