@@ -578,6 +578,88 @@ class EditorViewModelTest {
     }
 
     @Test
+    fun `showHelp on a Local project routes to the engine and does not hit the backend when found`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.helpResult = Result.success(
+            com.rmobile.console.data.model.HelpResponse(topic = "aes", text = "Aesthetics", found = true),
+        )
+        val api = FakeApi()
+        val vm = viewModel(api = api, engineProvider = { _ -> engine }) // defaultEngine = LOCAL
+        vm.showHelp("aes")
+        advanceUntilIdle()
+
+        assertEquals("aes", engine.lastHelpTopic)
+        assertEquals(null, api.lastHelp) // no Remote fallback when the engine found it
+        val help = vm.uiState.value.help
+        assertTrue(help is HelpState.Loaded && help.response.text == "Aesthetics")
+    }
+
+    @Test
+    fun `showHelp on a Local project falls back to the backend when on-device help is not found`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.helpResult = Result.success(com.rmobile.console.data.model.HelpResponse(topic = "aes", found = false))
+        val api = FakeApi()
+        api.helpResponse = com.rmobile.console.data.model.HelpResponse(topic = "aes", packageName = "ggplot2", text = "From backend", found = true)
+        val vm = viewModel(api = api, engineProvider = { _ -> engine })
+        vm.showHelp("aes")
+        advanceUntilIdle()
+
+        assertEquals("aes", api.lastHelp!!.topic) // fallback consulted
+        val help = vm.uiState.value.help
+        assertTrue(help is HelpState.Loaded && help.response.text == "From backend")
+    }
+
+    @Test
+    fun `showHelp shows NotFound when neither the engine nor the backend has it`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.helpResult = Result.success(com.rmobile.console.data.model.HelpResponse(found = false))
+        val api = FakeApi()
+        api.helpResponse = com.rmobile.console.data.model.HelpResponse(found = false)
+        val vm = viewModel(api = api, engineProvider = { _ -> engine })
+        vm.showHelp("nope")
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.help is HelpState.NotFound)
+    }
+
+    @Test
+    fun `showHelp on a Remote project does not fall back and surfaces the error`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.helpResult = Result.failure(RuntimeException("boom"))
+        val api = FakeApi()
+        val vm = viewModel(
+            api = api,
+            defaultEngine = { ExecutionEngineChoice.REMOTE },
+            engineProvider = { _ -> engine },
+        )
+        vm.showHelp("aes")
+        advanceUntilIdle()
+
+        assertEquals(null, api.lastHelp) // REMOTE: no second (fallback) call
+        assertTrue(vm.uiState.value.help is HelpState.Error)
+    }
+
+    @Test
+    fun `refreshSymbols on a Local project uses the engine symbols`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.symbolsResult = Result.success(com.rmobile.console.data.model.SymbolsResponse(listOf("engine_sym")))
+        val vm = viewModel(engineProvider = { _ -> engine })
+        advanceUntilIdle() // init calls refreshSymbols()
+        assertTrue(vm.uiState.value.completionSymbols.contains("engine_sym"))
+    }
+
+    @Test
+    fun `refreshSymbols falls back to backend symbols when the engine fails`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.symbolsResult = Result.failure(RuntimeException("offline"))
+        val api = FakeApi()
+        api.symbolsResponse = com.rmobile.console.data.model.SymbolsResponse(listOf("backend_sym"))
+        val vm = viewModel(api = api, engineProvider = { _ -> engine })
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.completionSymbols.contains("backend_sym"))
+    }
+
+    @Test
     fun `runCode assembles ordered output from stdout markers`() {
         val md = com.rmobile.console.data.execution.OutputAssembler.PLOT_MARKER + "done\n"
         val engine = FakeEngine(ExecuteResponse(stdout = md, plots = listOf("PNG"), tables = emptyList()))
