@@ -388,9 +388,7 @@ class EditorViewModel(
             var resp = primary.getOrNull()
             var failure = primary.exceptionOrNull()
             if (choice == ExecutionEngineChoice.LOCAL && (resp == null || !resp.found)) {
-                repository.help(t, session).getOrNull()?.let { fb ->
-                    if (fb.found) { resp = fb; failure = null }
-                }
+                repository.help(t, session).getOrNull()?.let { fb -> resp = fb; failure = null }
             }
             if (requestId != helpRequestId) return@launch
             val r = resp

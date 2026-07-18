@@ -57,7 +57,8 @@ class EditorViewModelTest {
         }
         override suspend fun install(request: InstallRequest): InstallResponse = InstallResponse(installed = true)
         override suspend fun uninstall(request: UninstallRequest): UninstallResponse = UninstallResponse(removed = true)
-        override suspend fun packages(sessionId: String): PackagesResponse = PackagesResponse()
+        var packagesResponse: PackagesResponse = PackagesResponse()
+        override suspend fun packages(sessionId: String): PackagesResponse = packagesResponse
         override suspend fun importLegacy(request: ImportLegacyRequest): ImportLegacyResponse = ImportLegacyResponse()
 
         var symbolsResponse: com.rmobile.console.data.model.SymbolsResponse =
@@ -133,7 +134,9 @@ class EditorViewModelTest {
             lastResetLibraryKey = libraryKey
             return Result.success(Unit)
         }
-        override suspend fun listPackages(sessionId: String, libraryKey: String?) = Result.success(com.rmobile.console.data.model.PackagesResponse())
+        var packagesResult: Result<com.rmobile.console.data.model.PackagesResponse> =
+            Result.success(com.rmobile.console.data.model.PackagesResponse())
+        override suspend fun listPackages(sessionId: String, libraryKey: String?) = packagesResult
         override suspend fun install(request: com.rmobile.console.data.model.InstallRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.InstallResponse())
         override suspend fun uninstall(request: com.rmobile.console.data.model.UninstallRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.UninstallResponse())
         override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.PreviewResponse())
@@ -657,6 +660,33 @@ class EditorViewModelTest {
         val vm = viewModel(api = api, engineProvider = { _ -> engine })
         advanceUntilIdle()
         assertTrue(vm.uiState.value.completionSymbols.contains("backend_sym"))
+    }
+
+    @Test
+    fun `showHelp prefers a backend not-found over a stale local engine error`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.helpResult = Result.failure(RuntimeException("webr blew up"))
+        val api = FakeApi()
+        api.helpResponse = com.rmobile.console.data.model.HelpResponse(found = false)
+        val vm = viewModel(api = api, engineProvider = { _ -> engine }) // LOCAL
+        vm.showHelp("aes")
+        advanceUntilIdle()
+
+        assertEquals("aes", api.lastHelp!!.topic) // fallback consulted despite the engine error
+        assertTrue(vm.uiState.value.help is HelpState.NotFound)
+    }
+
+    @Test
+    fun `refreshSymbols falls back to backend packages when the engine listPackages fails`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.packagesResult = Result.failure(RuntimeException("offline"))
+        val api = FakeApi()
+        api.packagesResponse = com.rmobile.console.data.model.PackagesResponse(listOf("backend_pkg"))
+        val vm = viewModel(api = api, engineProvider = { _ -> engine })
+        advanceUntilIdle()
+        // The engine's listPackages failed (null), so the null-packages fallback path must have
+        // consulted the backend — its package name shows up in the completion set.
+        assertTrue(vm.uiState.value.completionSymbols.contains("backend_pkg"))
     }
 
     @Test
