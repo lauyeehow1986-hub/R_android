@@ -155,6 +155,17 @@ them into WebR's in-memory FS on demand:
   previews on-device without loading it all into memory; `.rds` still needs a full
   sync (and shows the "too large for on-device" message if it doesn't fit).
 
+## Output order markers
+
+`harness.R` emits two stdout order-markers as it runs: `\x02RMOBILE:PLOT\x03`
+(via the `plot.new`/`grid.newpage` graphics hooks, once per plot page) and
+`\x02RMOBILE:TABLE\x03` (right after each top-level table's `.emit`). The app's
+`OutputAssembler` (`data/execution/`) reads these markers to interleave text,
+plots, and tables in the order R actually produced them, instead of grouping
+each kind together. `harness.R` must stay byte-parity with the backend
+`plumber.R` `/execute` wrapper on these two marker strings — change one, change
+both, and change `OutputAssembler.kt` in the same commit.
+
 ## License
 
 WebR is distributed under the **GPL** (GNU General Public License) — the same

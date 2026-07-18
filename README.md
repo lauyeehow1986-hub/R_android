@@ -214,7 +214,8 @@ bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
 - **Copy output** to the clipboard and **share plots** as PNGs.
 - **Rich output** — data frames (and tibbles/data.tables/matrices/`summary()`)
   render as sortable, filterable, resizable tables with tap-to-expand cells;
-  plots open full-screen with pinch-zoom.
+  plots open full-screen with pinch-zoom. Text, plots, and tables render in the
+  **order R produced them** (falling back to grouped output on older backends).
 - **Durable R session** — variables and attached packages persist between runs
   and restarts; a workspace summary shows what's in scope, and "Reset session"
   clears it.

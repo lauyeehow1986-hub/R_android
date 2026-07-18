@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.rmobile.console.data.execution.OutputChunk
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.scripts.SavedScript
 import com.rmobile.console.data.settings.ExecutionEngineChoice
@@ -800,11 +801,64 @@ private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
             }
         }
 
-        if (uiState.stdout.isNotBlank()) {
-            item {
-                Text(text = uiState.stdout, fontFamily = FontFamily.Monospace)
+        if (uiState.outputOrdered) {
+            items(uiState.output) { chunk ->
+                when (chunk) {
+                    is OutputChunk.Text -> Text(text = chunk.text, fontFamily = FontFamily.Monospace)
+                    is OutputChunk.Table -> RTableView(chunk.table)
+                    is OutputChunk.Plot -> {
+                        val bitmap = remember(chunk.base64Png) { decodeBase64Png(chunk.base64Png) }
+                        bitmap?.let {
+                            Column {
+                                Image(
+                                    bitmap = it.asImageBitmap(),
+                                    contentDescription = "R plot output",
+                                    modifier = Modifier.clickable { zoomedPlot = it.asImageBitmap() },
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    IconButton(onClick = { sharePlotPng(context, chunk.base64Png) }) {
+                                        Icon(Icons.Default.Share, contentDescription = "Share plot")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            if (uiState.stdout.isNotBlank()) {
+                item {
+                    Text(text = uiState.stdout, fontFamily = FontFamily.Monospace)
+                }
+            }
+            items(uiState.tables) { table ->
+                RTableView(table)
+            }
+            items(uiState.plotsBase64) { base64Png ->
+                val bitmap = remember(base64Png) { decodeBase64Png(base64Png) }
+                bitmap?.let {
+                    Column {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = "R plot output",
+                            modifier = Modifier.clickable { zoomedPlot = it.asImageBitmap() },
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            IconButton(onClick = { sharePlotPng(context, base64Png) }) {
+                                Icon(Icons.Default.Share, contentDescription = "Share plot")
+                            }
+                        }
+                    }
+                }
             }
         }
+
         if (uiState.stderr.isNotBlank()) {
             item {
                 Text(
@@ -812,29 +866,6 @@ private fun OutputPanel(uiState: EditorUiState, modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.error,
                     fontFamily = FontFamily.Monospace,
                 )
-            }
-        }
-        items(uiState.tables) { table ->
-            RTableView(table)
-        }
-        items(uiState.plotsBase64) { base64Png ->
-            val bitmap = remember(base64Png) { decodeBase64Png(base64Png) }
-            bitmap?.let {
-                Column {
-                    Image(
-                        bitmap = it.asImageBitmap(),
-                        contentDescription = "R plot output",
-                        modifier = Modifier.clickable { zoomedPlot = it.asImageBitmap() },
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        IconButton(onClick = { sharePlotPng(context, base64Png) }) {
-                            Icon(Icons.Default.Share, contentDescription = "Share plot")
-                        }
-                    }
-                }
             }
         }
     }

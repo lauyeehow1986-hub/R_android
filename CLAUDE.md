@@ -167,6 +167,15 @@ Retrofit client, not worth a framework yet):
   both engines emit identical `table*.json` — change one, change the other in the
   same commit. `assets/webr/bridge.js` boots WebR, runs the harness, and posts
   `ExecuteResponse`-shaped JSON; `assets/webr/dist/` is the vendored runtime.
+  Both harnesses also emit two stdout order-markers — `\x02RMOBILE:PLOT\x03`
+  (on each plot page, via `setHook("plot.new"/"grid.newpage")`) and
+  `\x02RMOBILE:TABLE\x03` (after each top-level table `.emit`) — so the app's
+  pure `OutputAssembler` (`data/execution/`) can interleave text, plots, and
+  tables in execution order. Those two marker strings are a parity contract
+  shared by `harness.R`, `plumber.R`, and `OutputAssembler.kt`; change all
+  three together. The app strips the markers from `stdout` and falls back to
+  the flat layout when they're absent (e.g. an older backend) or don't
+  reconcile.
 - `data/settings/` — `SettingsStore` (SharedPreferences) persists the backend
   URL, API key, run history, saved scripts, **projects**, and the **execution
   engine choice** (`ExecutionEngineChoice.LOCAL`/`REMOTE`, default `LOCAL`, via

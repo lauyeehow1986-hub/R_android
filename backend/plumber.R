@@ -246,9 +246,13 @@ function(req, res) {
     # file. Helpers live inside local({}) so nothing leaks into globalenv (keeping
     # save.image()/workspaceObjects clean); user assignments still target globalenv.
     'local({',
+    '  .RMOBILE_PLOT_MARKER <- paste0(intToUtf8(2), "RMOBILE:PLOT", intToUtf8(3))',
+    '  .RMOBILE_TABLE_MARKER <- paste0(intToUtf8(2), "RMOBILE:TABLE", intToUtf8(3))',
+    '  setHook("plot.new", function(...) cat(.RMOBILE_PLOT_MARKER), action = "replace")',
+    '  setHook("grid.newpage", function(...) cat(.RMOBILE_PLOT_MARKER), action = "replace")',
     TABLE_EMIT_HELPERS,
     '  .is_print <- function(e) is.call(e) && is.symbol(e[[1]]) && identical(as.character(e[[1]]), "print")',
-    '  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if ((r$visible || pr) && .tabular(r$value)) try(.emit(r$value), silent = TRUE); if (r$visible) print(r$value) }',
+    '  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if (r$visible) print(r$value); if ((r$visible || pr) && .tabular(r$value)) { try(.emit(r$value), silent = TRUE); cat(.RMOBILE_TABLE_MARKER) } }',
     sprintf('  .exec(parse(file = %s))', shQuote(entry_rel)),
     '})',
     'invisible(grDevices::dev.off())',

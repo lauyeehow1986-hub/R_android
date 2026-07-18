@@ -1,5 +1,9 @@
 local({
   .maxrows <- 200
+  .PLOT_MARKER <- paste0(intToUtf8(2), "RMOBILE:PLOT", intToUtf8(3))
+  .TABLE_MARKER <- paste0(intToUtf8(2), "RMOBILE:TABLE", intToUtf8(3))
+  setHook("plot.new", function(...) cat(.PLOT_MARKER), action = "replace")
+  setHook("grid.newpage", function(...) cat(.PLOT_MARKER), action = "replace")
   .emit <- function(x) {
     df <- if (is.data.frame(x)) x else as.data.frame.matrix(x, stringsAsFactors = FALSE)
     n <- nrow(df); sub <- utils::head(df, .maxrows)
@@ -15,6 +19,6 @@ local({
   }
   .tabular <- function(v) is.data.frame(v) || ((is.matrix(v) || inherits(v, "table")) && length(dim(v)) == 2)
   .is_print <- function(e) is.call(e) && is.symbol(e[[1]]) && identical(as.character(e[[1]]), "print")
-  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if ((r$visible || pr) && .tabular(r$value)) try(.emit(r$value), silent = TRUE); if (r$visible) print(r$value) }
+  .exec <- function(exprs) for (e in exprs) { pr <- .is_print(e); r <- withVisible(eval(e, globalenv())); if (r$visible) print(r$value); if ((r$visible || pr) && .tabular(r$value)) { try(.emit(r$value), silent = TRUE); cat(.TABLE_MARKER) } }
   .exec(parse(file = .RMOBILE_ENTRY))
 })

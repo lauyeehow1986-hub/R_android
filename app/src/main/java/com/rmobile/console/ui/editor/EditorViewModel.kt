@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.ServiceLocator
 import com.rmobile.console.data.execution.ExecutionEngine
+import com.rmobile.console.data.execution.OutputAssembler
 import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.history.HistoryStore
@@ -293,13 +294,16 @@ class EditorViewModel(
             val request = ExecuteRequest(sessionId = session, files = files, entryFile = project.entryFileName)
             engineFor(project).execute(request, libraryKey = ProjectSession.libraryKey(project))
                 .onSuccess { response ->
+                    val assembled = OutputAssembler.assemble(response.stdout, response.plots, response.tables)
                     _uiState.update {
                         it.copy(
                             isRunning = false,
-                            stdout = response.stdout,
+                            stdout = assembled.cleanStdout,
                             stderr = response.stderr,
                             plotsBase64 = response.plots,
                             tables = response.tables,
+                            output = assembled.chunks,
+                            outputOrdered = assembled.ordered,
                             errorMessage = response.error,
                             timedOut = response.timedOut,
                             workspaceObjects = response.workspaceObjects ?: it.workspaceObjects,
@@ -310,7 +314,7 @@ class EditorViewModel(
                 }
                 .onFailure { t ->
                     _uiState.update {
-                        it.copy(isRunning = false, errorMessage = t.message ?: "Failed to reach the R execution backend.", timedOut = false, tables = emptyList())
+                        it.copy(isRunning = false, errorMessage = t.message ?: "Failed to reach the R execution backend.", timedOut = false, tables = emptyList(), output = emptyList(), outputOrdered = false)
                     }
                 }
         }

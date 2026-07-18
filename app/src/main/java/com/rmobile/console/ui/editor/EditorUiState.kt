@@ -1,5 +1,6 @@
 package com.rmobile.console.ui.editor
 
+import com.rmobile.console.data.execution.OutputChunk
 import com.rmobile.console.data.execution.SwapPhase
 import com.rmobile.console.data.history.HistoryEntry
 import com.rmobile.console.data.project.Project
@@ -19,6 +20,10 @@ data class EditorUiState(
     val stderr: String = "",
     val plotsBase64: List<String> = emptyList(),
     val tables: List<com.rmobile.console.data.model.RTable> = emptyList(),
+    /** Ordered run output (text/plot/table). Rendered only when [outputOrdered]. */
+    val output: List<OutputChunk> = emptyList(),
+    /** True when [output] fully accounts for the run's plots/tables and should be used. */
+    val outputOrdered: Boolean = false,
     val errorMessage: String? = null,
     val timedOut: Boolean = false,
     val history: List<HistoryEntry> = emptyList(),
