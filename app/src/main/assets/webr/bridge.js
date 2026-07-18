@@ -682,11 +682,16 @@ window.webrPreview = async (id, requestJson, libraryKey) => {
 window.webrHelp = async (id, requestJson, libraryKey) => {
   if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ topic: '', packageName: null, text: '', found: false })); return; }
   const req = JSON.parse(requestJson);
+  // The backend /help rejects topics that aren't ^[A-Za-z0-9._]+$; mirror that here so
+  // arbitrary free-text (from the "?" help search) can't reach the R eval. Combined with
+  // as.name() below (never parse/eval of the topic), this keeps the lookup injection-free.
+  if (typeof req.topic !== 'string' || !/^[A-Za-z0-9._]+$/.test(req.topic)) {
+    AndroidBridge.onResult(id, JSON.stringify({ topic: (req && req.topic) || '', packageName: null, text: '', found: false }));
+    return;
+  }
   const sessionId = req.sessionId || 'default';
   await ensureSession(sessionId, libraryKey || sessionId);
   try {
-    // Topic is validated app-side (^[A-Za-z0-9._]+$); pass it as a quoted R string and
-    // resolve it via as.name() so it is never spliced into an R code path.
     const topicLit = JSON.stringify(req.topic);
     await webR.evalRVoid(
       `local({ topic <- ${topicLit}; ` +
@@ -707,6 +712,7 @@ window.webrHelp = async (id, requestJson, libraryKey) => {
       text = new TextDecoder().decode(bytes);
       // Strip Rd2txt terminal overstrike: `_\bX` (underline) and `X\bX` (bold). \b = \x08.
       text = text.replace(/.\x08/g, '');
+      text = text.replace(/\n+$/, ''); // match the backend, which drops the trailing newline
     }
     let pkg = null;
     if (await exists('/tmp/rmobile_help_pkg.txt')) {
