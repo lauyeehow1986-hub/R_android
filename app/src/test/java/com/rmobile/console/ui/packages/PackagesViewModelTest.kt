@@ -109,6 +109,10 @@ class PackagesViewModelTest {
         }
         override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest, libraryKey: String?) =
             Result.success(com.rmobile.console.data.model.PreviewResponse())
+        override suspend fun help(topic: String, sessionId: String, libraryKey: String?) =
+            Result.success(com.rmobile.console.data.model.HelpResponse())
+        override suspend fun symbols(sessionId: String, libraryKey: String?) =
+            Result.success(com.rmobile.console.data.model.SymbolsResponse())
     }
 
     @Test

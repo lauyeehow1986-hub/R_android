@@ -137,6 +137,17 @@ class EditorViewModelTest {
         override suspend fun install(request: com.rmobile.console.data.model.InstallRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.InstallResponse())
         override suspend fun uninstall(request: com.rmobile.console.data.model.UninstallRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.UninstallResponse())
         override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest, libraryKey: String?) = Result.success(com.rmobile.console.data.model.PreviewResponse())
+        var helpResult: Result<com.rmobile.console.data.model.HelpResponse> =
+            Result.success(com.rmobile.console.data.model.HelpResponse(found = false))
+        var symbolsResult: Result<com.rmobile.console.data.model.SymbolsResponse> =
+            Result.success(com.rmobile.console.data.model.SymbolsResponse())
+        var lastHelpTopic: String? = null
+        override suspend fun help(topic: String, sessionId: String, libraryKey: String?): Result<com.rmobile.console.data.model.HelpResponse> {
+            lastHelpTopic = topic
+            return helpResult
+        }
+        override suspend fun symbols(sessionId: String, libraryKey: String?): Result<com.rmobile.console.data.model.SymbolsResponse> =
+            symbolsResult
     }
 
     @Test

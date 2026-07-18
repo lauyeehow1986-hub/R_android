@@ -45,4 +45,11 @@ class LocalExecutionEngine(
         val reqJson = json.encodeToString(PreviewRequest.serializer(), request)
         json.decodeFromString<PreviewResponse>(controller.preview(reqJson, libraryKey ?: session))
     }
+
+    // TODO: wire to bridge.js in a later task (help/symbols on the Local engine).
+    override suspend fun help(topic: String, sessionId: String, libraryKey: String?): Result<com.rmobile.console.data.model.HelpResponse> =
+        Result.failure(UnsupportedOperationException("help is not yet supported on the Local engine"))
+
+    override suspend fun symbols(sessionId: String, libraryKey: String?): Result<com.rmobile.console.data.model.SymbolsResponse> =
+        Result.failure(UnsupportedOperationException("symbols is not yet supported on the Local engine"))
 }

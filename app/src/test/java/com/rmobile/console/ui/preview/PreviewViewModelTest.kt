@@ -142,6 +142,10 @@ class PreviewViewModelTest {
             lastRequest = request
             return Result.success(PreviewResponse(table = RTable(columns = listOf("x"), totalRows = 1)))
         }
+        override suspend fun help(topic: String, sessionId: String, libraryKey: String?) =
+            Result.success(com.rmobile.console.data.model.HelpResponse())
+        override suspend fun symbols(sessionId: String, libraryKey: String?) =
+            Result.success(com.rmobile.console.data.model.SymbolsResponse())
     }
 
     @Test
