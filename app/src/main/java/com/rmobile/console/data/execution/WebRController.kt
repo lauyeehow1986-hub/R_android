@@ -168,6 +168,12 @@ class WebRController(
     suspend fun preview(requestJson: String, libraryKey: String): String =
         callBridge("window.webrPreview", org.json.JSONObject.quote(requestJson), org.json.JSONObject.quote(libraryKey))
 
+    suspend fun help(requestJson: String, libraryKey: String): String =
+        callBridge("window.webrHelp", org.json.JSONObject.quote(requestJson), org.json.JSONObject.quote(libraryKey))
+
+    suspend fun symbols(sessionId: String, libraryKey: String): String =
+        callBridge("window.webrSymbols", org.json.JSONObject.quote(sessionId), org.json.JSONObject.quote(libraryKey))
+
     /**
      * Invokes a bridge function that takes the result id as its first argument and
      * [jsArgs] (already JS-literal-encoded) as the following arguments, and awaits the
