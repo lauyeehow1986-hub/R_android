@@ -37,8 +37,16 @@ class RemoteExecutionEngineTest {
             return com.rmobile.console.data.model.PackagesResponse(listOf("glue"))
         }
         override suspend fun importLegacy(request: com.rmobile.console.data.model.ImportLegacyRequest) = com.rmobile.console.data.model.ImportLegacyResponse()
-        override suspend fun symbols(sessionId: String) = com.rmobile.console.data.model.SymbolsResponse()
-        override suspend fun help(request: com.rmobile.console.data.model.HelpRequest) = com.rmobile.console.data.model.HelpResponse()
+        var lastHelp: com.rmobile.console.data.model.HelpRequest? = null
+        var lastSymbolsSessionId: String? = null
+        override suspend fun symbols(sessionId: String): com.rmobile.console.data.model.SymbolsResponse {
+            lastSymbolsSessionId = sessionId
+            return com.rmobile.console.data.model.SymbolsResponse(listOf("mean"))
+        }
+        override suspend fun help(request: com.rmobile.console.data.model.HelpRequest): com.rmobile.console.data.model.HelpResponse {
+            lastHelp = request
+            return com.rmobile.console.data.model.HelpResponse(topic = request.topic, text = "Usage", found = true)
+        }
         override suspend fun preview(request: com.rmobile.console.data.model.PreviewRequest): com.rmobile.console.data.model.PreviewResponse {
             lastPreview = request
             return com.rmobile.console.data.model.PreviewResponse(truncated = true)
@@ -102,5 +110,24 @@ class RemoteExecutionEngineTest {
         assertEquals("a.csv", api.lastPreview!!.name)
         assertEquals("proj-2", api.lastPreview!!.sessionId)
         assertTrue(result.getOrNull()!!.truncated)
+    }
+
+    @Test
+    fun `help forwards topic and session to the repository`() = runTest {
+        val api = RecordingApi()
+        val engine = RemoteExecutionEngine(RExecutionRepository(api))
+        val result = engine.help("mean", "proj-2")
+        assertEquals("mean", api.lastHelp!!.topic)
+        assertEquals("proj-2", api.lastHelp!!.sessionId)
+        assertTrue(result.getOrNull()!!.found)
+    }
+
+    @Test
+    fun `symbols forwards the session and wraps the list in a SymbolsResponse`() = runTest {
+        val api = RecordingApi()
+        val engine = RemoteExecutionEngine(RExecutionRepository(api))
+        val result = engine.symbols("proj-2")
+        assertEquals("proj-2", api.lastSymbolsSessionId)
+        assertEquals(listOf("mean"), result.getOrNull()!!.symbols)
     }
 }

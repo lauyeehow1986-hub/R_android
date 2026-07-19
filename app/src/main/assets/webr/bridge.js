@@ -676,3 +676,77 @@ window.webrPreview = async (id, requestJson, libraryKey) => {
     AndroidBridge.onResult(id, JSON.stringify({ table: null, error: String(e), truncated: false }));
   } finally { shelter.purge(); }
 };
+
+// On-device R help: resolve a topic with utils::help, render its Rd via
+// tools::Rd2txt, and strip terminal overstrike. Mirrors the backend /help handler.
+window.webrHelp = async (id, requestJson, libraryKey) => {
+  if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ topic: '', packageName: null, text: '', found: false })); return; }
+  const req = JSON.parse(requestJson);
+  // The backend /help rejects topics that aren't ^[A-Za-z0-9._]+$; mirror that here so
+  // arbitrary free-text (from the "?" help search) can't reach the R eval. Combined with
+  // as.name() below (never parse/eval of the topic), this keeps the lookup injection-free.
+  if (typeof req.topic !== 'string' || !/^[A-Za-z0-9._]+$/.test(req.topic)) {
+    AndroidBridge.onResult(id, JSON.stringify({ topic: (req && req.topic) || '', packageName: null, text: '', found: false }));
+    return;
+  }
+  const sessionId = req.sessionId || 'default';
+  await ensureSession(sessionId, libraryKey || sessionId);
+  try {
+    const topicLit = JSON.stringify(req.topic);
+    await webR.evalRVoid(
+      `local({ topic <- ${topicLit}; ` +
+      `unlink(c('/tmp/rmobile_help.txt','/tmp/rmobile_help_pkg.txt')); ` +
+      `h <- tryCatch(eval(substitute(utils::help(TT), list(TT = as.name(topic)))), error = function(e) NULL); ` +
+      `if (!is.null(h) && length(h) >= 1) { path <- as.character(h)[1]; ` +
+      `  tryCatch({ rd <- utils:::.getHelpFile(path); ` +
+      `    tools::Rd2txt(rd, out = '/tmp/rmobile_help.txt'); ` +
+      `    writeLines(basename(dirname(dirname(path))), '/tmp/rmobile_help_pkg.txt') }, error = function(e) NULL) } })`
+    );
+    const exists = async (p) => {
+      const r = await webR.evalR(`file.exists(${JSON.stringify(p)})`);
+      const v = (await r.toArray())[0] === true; webR.destroy(r); return v;
+    };
+    let text = '';
+    if (await exists('/tmp/rmobile_help.txt')) {
+      const bytes = await webR.FS.readFile('/tmp/rmobile_help.txt');
+      text = new TextDecoder().decode(bytes);
+      // Strip Rd2txt terminal overstrike: `_\bX` (underline) and `X\bX` (bold). \b = \x08.
+      text = text.replace(/.\x08/g, '');
+      text = text.replace(/\n+$/, ''); // match the backend, which drops the trailing newline
+    }
+    let pkg = null;
+    if (await exists('/tmp/rmobile_help_pkg.txt')) {
+      const b = await webR.FS.readFile('/tmp/rmobile_help_pkg.txt');
+      pkg = new TextDecoder().decode(b).split('\n')[0].trim() || null;
+    }
+    const found = text.length > 0;
+    AndroidBridge.onResult(id, JSON.stringify({ topic: req.topic, packageName: pkg, text, found }));
+  } catch (e) {
+    AndroidBridge.onResult(id, JSON.stringify({ topic: req.topic, packageName: null, text: '', found: false }));
+  }
+};
+
+// On-device completion symbols: exports of the default-attached packages plus
+// whatever is currently attached, filtered to valid identifiers. Mirrors the
+// backend /symbols handler (same DEFAULT_ATTACHED set and 5000 cap).
+window.webrSymbols = async (id, sessionId, libraryKey) => {
+  if (!ready) { AndroidBridge.onResult(id, JSON.stringify({ symbols: [] })); return; }
+  const sid = sessionId || 'default';
+  await ensureSession(sid, libraryKey || sid);
+  try {
+    await webR.evalRVoid(
+      `local({ base_pkgs <- c('base','methods','datasets','utils','grDevices','graphics','stats'); ` +
+      `attached <- sub('^package:', '', grep('^package:', search(), value = TRUE)); ` +
+      `pkgs <- unique(c(base_pkgs, attached)); ` +
+      `syms <- unlist(lapply(pkgs, function(p) tryCatch(getNamespaceExports(p), error = function(e) character(0)))); ` +
+      `syms <- unique(syms[grepl('^[A-Za-z.][A-Za-z0-9._]*$', syms)]); syms <- sort(syms); ` +
+      `if (length(syms) > 5000L) syms <- syms[seq_len(5000L)]; ` +
+      `writeLines(jsonlite::toJSON(list(symbols = as.list(syms)), auto_unbox = FALSE), '/tmp/rmobile_symbols.json') })`
+    );
+    const bytes = await webR.FS.readFile('/tmp/rmobile_symbols.json');
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    AndroidBridge.onResult(id, JSON.stringify({ symbols: parsed.symbols || [] }));
+  } catch (e) {
+    AndroidBridge.onResult(id, JSON.stringify({ symbols: [] }));
+  }
+};

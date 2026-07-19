@@ -93,12 +93,18 @@ Retrofit client, not worth a framework yet):
   a `snapshotFlow` of the editor field, against `uiState.completionSymbols`
   (assembled in `EditorViewModel` from the pure, unit-tested `completion/CompletionOps`
   + baked `BaseRSymbols`, the session `workspaceObjects`, installed-package names,
-  and a cached backend `/symbols` index refreshed on run/project-open/packages-return
+  and a cached **engine-routed** `/symbols` index (on-device via WebR for Local projects,
+  the backend for Remote) refreshed on run/project-open/packages-return
   via `refreshSymbols()`, which guards against stale-session results). Tapping a chip
   inserts (`replaceRange`); long-pressing a chip, tapping the leading `? <token>`
   chip, or using the top-bar `?` help search opens **R help** — `EditorViewModel.showHelp`
   (generation-guarded so a dismissed lookup can't resurface) drives a `HelpState`
-  rendered by `HelpSheet` (a `ModalBottomSheet` showing `Rd2txt` help text).
+  rendered by `HelpSheet` (a `ModalBottomSheet` showing `Rd2txt` help text). **Help and the
+  `/symbols` index are engine-routed, local-first:** `showHelp`/`refreshSymbols` call the active
+  project's `ExecutionEngine` — Local resolves them on-device via `bridge.js` `webrHelp`/`webrSymbols`
+  (real `tools::Rd2txt` + `getNamespaceExports`, no network), Remote via the backend `/help`/`/symbols`.
+  On a Local project a not-found/failed on-device lookup falls back best-effort to the Remote backend
+  when reachable; a failed fallback degrades quietly (help → `NotFound`, not an error banner).
 - `ui/settings/` — `SettingsScreen` + `SettingsViewModel` for editing the
   backend URL and API key at runtime, with a "Test connection" action backed by
   `NetworkModule.probeHealth` (pings `<url>/health` through a separate client
@@ -425,8 +431,8 @@ a Settings toggle. Both engines return the identical `ExecuteResponse` contract
 engine-agnostic; the WebR harness (`assets/webr/harness.R`) mirrors the backend's
 `withVisible` loop + `TABLE_EMIT_HELPERS`. The Local engine also supports
 **on-device package install** — `ExecutionEngine` carries `listPackages`/`install`/
-`uninstall` (Remote delegates to the backend endpoints; Local delegates to
-`WebRController` → `bridge.js` `webrInstall`/`webrUninstall`/`webrListPackages`),
+`uninstall` (and `help`/`symbols`; Remote delegates to the backend endpoints; Local delegates to
+`WebRController` → `bridge.js` `webrInstall`/`webrUninstall`/`webrListPackages`/`webrHelp`/`webrSymbols`),
 and `PackagesViewModel` routes them through `ServiceLocator.engineFor(engineChoice)`.
 Local installs are **hybrid-sourced** — `webr::install(pkg, repos = c(<bundled repo>,
 "https://repo.r-wasm.org"))` searches a bundled mini-repo (`assets/webr/repo/`,

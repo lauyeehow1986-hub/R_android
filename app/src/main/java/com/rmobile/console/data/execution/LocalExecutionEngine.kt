@@ -2,11 +2,14 @@ package com.rmobile.console.data.execution
 
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.HelpRequest
+import com.rmobile.console.data.model.HelpResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.PreviewRequest
 import com.rmobile.console.data.model.PreviewResponse
+import com.rmobile.console.data.model.SymbolsResponse
 import com.rmobile.console.data.model.UninstallRequest
 import com.rmobile.console.data.model.UninstallResponse
 import kotlinx.serialization.json.Json
@@ -44,5 +47,14 @@ class LocalExecutionEngine(
         val session = request.sessionId ?: com.rmobile.console.data.RExecutionRepository.DEFAULT_SESSION_ID
         val reqJson = json.encodeToString(PreviewRequest.serializer(), request)
         json.decodeFromString<PreviewResponse>(controller.preview(reqJson, libraryKey ?: session))
+    }
+
+    override suspend fun help(topic: String, sessionId: String, libraryKey: String?): Result<HelpResponse> = runCatching {
+        val reqJson = json.encodeToString(HelpRequest.serializer(), HelpRequest(topic, sessionId))
+        json.decodeFromString<HelpResponse>(controller.help(reqJson, libraryKey ?: sessionId))
+    }
+
+    override suspend fun symbols(sessionId: String, libraryKey: String?): Result<SymbolsResponse> = runCatching {
+        json.decodeFromString<SymbolsResponse>(controller.symbols(sessionId, libraryKey ?: sessionId))
     }
 }

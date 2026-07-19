@@ -451,6 +451,8 @@ function(sessionId = "default") {
 }
 
 #* Completion symbols for a session: base + recommended + attached-package exports
+#* NOTE: the on-device Local engine duplicates this in bridge.js `webrSymbols`
+#* (DEFAULT_ATTACHED + attached-pkg getNamespaceExports, same filter/cap) — keep in sync.
 #* @get /symbols
 function(sessionId = "default") {
   session_id <- sanitize_session_id(sessionId)
@@ -487,6 +489,8 @@ function(sessionId = "default") {
 }
 
 #* Render an R help topic to text for a session
+#* NOTE: the on-device Local engine duplicates this resolution in bridge.js `webrHelp`
+#* (utils::help -> .getHelpFile -> Rd2txt + overstrike strip) — keep them functionally in sync.
 #* @post /help
 function(req, res) {
   body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)

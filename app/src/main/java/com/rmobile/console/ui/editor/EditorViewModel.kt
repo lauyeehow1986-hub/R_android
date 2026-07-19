@@ -348,13 +348,22 @@ class EditorViewModel(
 
     /** Refresh the cached symbol index + package names for the active project's session. */
     fun refreshSymbols() {
-        val session = ProjectSession.of(_uiState.value.project)
+        val project = _uiState.value.project
+        val choice = ExecutionEngineChoice.resolve(project.engine, defaultEngine())
+        val session = ProjectSession.of(project)
+        val libraryKey = ProjectSession.libraryKey(project)
+        val engine = engineProvider(choice)
         viewModelScope.launch {
-            val syms = repository.listSymbols(session).getOrNull().orEmpty()
-            val pkgs = repository.listPackages(session).getOrNull()?.packages.orEmpty()
+            var syms = engine.symbols(session, libraryKey).getOrNull()?.symbols
+            var pkgs = engine.listPackages(session, libraryKey).getOrNull()?.packages
+            // Local-first: if an on-device lookup fails, fall back to the backend when reachable.
+            if (choice == ExecutionEngineChoice.LOCAL) {
+                if (syms == null) syms = repository.listSymbols(session).getOrNull()
+                if (pkgs == null) pkgs = repository.listPackages(session).getOrNull()?.packages
+            }
             if (ProjectSession.of(_uiState.value.project) == session) {
-                symbolIndex = syms
-                packageNames = pkgs
+                symbolIndex = syms.orEmpty()
+                packageNames = pkgs.orEmpty()
                 recomputeSymbols()
             }
         }
@@ -366,22 +375,33 @@ class EditorViewModel(
         // Stamp each request so a stale response (e.g. after the user dismissed the
         // sheet, or fired a newer lookup) can't overwrite current help state.
         val requestId = ++helpRequestId
-        val session = ProjectSession.of(_uiState.value.project)
+        val project = _uiState.value.project
+        val choice = ExecutionEngineChoice.resolve(project.engine, defaultEngine())
+        val session = ProjectSession.of(project)
+        val libraryKey = ProjectSession.libraryKey(project)
         _uiState.update { it.copy(help = HelpState.Loading(t)) }
         viewModelScope.launch {
-            repository.help(t, session)
-                .onSuccess { resp ->
-                    if (requestId == helpRequestId) {
-                        _uiState.update {
-                            it.copy(help = if (resp.found) HelpState.Loaded(resp) else HelpState.NotFound(t))
-                        }
-                    }
-                }
-                .onFailure { th ->
-                    if (requestId == helpRequestId) {
-                        _uiState.update { it.copy(help = HelpState.Error(t, th.message ?: "Failed to load help.")) }
-                    }
-                }
+            // Local-first: try the resolved engine (on-device for Local projects). If a Local
+            // lookup errors or finds nothing, fall back to the Remote backend when one is
+            // reachable — a failed fallback degrades to the local not-found (no error banner).
+            val primary = engineProvider(choice).help(t, session, libraryKey)
+            var resp = primary.getOrNull()
+            var failure = primary.exceptionOrNull()
+            if (choice == ExecutionEngineChoice.LOCAL && (resp == null || !resp.found)) {
+                repository.help(t, session).getOrNull()?.let { fb -> resp = fb; failure = null }
+            }
+            if (requestId != helpRequestId) return@launch
+            val r = resp
+            _uiState.update {
+                it.copy(
+                    help = when {
+                        r != null && r.found -> HelpState.Loaded(r)
+                        r != null -> HelpState.NotFound(t)
+                        failure != null -> HelpState.Error(t, failure.message ?: "Failed to load help.")
+                        else -> HelpState.NotFound(t)
+                    },
+                )
+            }
         }
     }
 

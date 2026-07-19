@@ -3,11 +3,13 @@ package com.rmobile.console.data.execution
 import com.rmobile.console.data.RExecutionRepository
 import com.rmobile.console.data.model.ExecuteRequest
 import com.rmobile.console.data.model.ExecuteResponse
+import com.rmobile.console.data.model.HelpResponse
 import com.rmobile.console.data.model.InstallRequest
 import com.rmobile.console.data.model.InstallResponse
 import com.rmobile.console.data.model.PackagesResponse
 import com.rmobile.console.data.model.PreviewRequest
 import com.rmobile.console.data.model.PreviewResponse
+import com.rmobile.console.data.model.SymbolsResponse
 import com.rmobile.console.data.model.UninstallRequest
 import com.rmobile.console.data.model.UninstallResponse
 
@@ -26,6 +28,10 @@ interface ExecutionEngine {
     suspend fun uninstall(request: UninstallRequest, libraryKey: String? = null): Result<UninstallResponse>
     /** Read-only preview of a data file or workspace object as a table. */
     suspend fun preview(request: PreviewRequest, libraryKey: String? = null): Result<PreviewResponse>
+    /** Rendered R help text for [topic]. */
+    suspend fun help(topic: String, sessionId: String, libraryKey: String? = null): Result<HelpResponse>
+    /** Completion symbol names for the session (base + attached/library()'d exports). */
+    suspend fun symbols(sessionId: String, libraryKey: String? = null): Result<SymbolsResponse>
 }
 
 /** The network backend engine — delegates to the existing repository. */
@@ -56,4 +62,10 @@ class RemoteExecutionEngine(
 
     override suspend fun preview(request: PreviewRequest, libraryKey: String?): Result<PreviewResponse> =
         repository.preview(request.source, request.name, request.sessionId ?: RExecutionRepository.DEFAULT_SESSION_ID)
+
+    override suspend fun help(topic: String, sessionId: String, libraryKey: String?): Result<HelpResponse> =
+        repository.help(topic, sessionId)
+
+    override suspend fun symbols(sessionId: String, libraryKey: String?): Result<SymbolsResponse> =
+        repository.listSymbols(sessionId).map { SymbolsResponse(it) }
 }
