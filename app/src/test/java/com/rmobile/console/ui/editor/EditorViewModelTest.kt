@@ -109,6 +109,7 @@ class EditorViewModelTest {
         projects: InMemoryProjectStore = InMemoryProjectStore(),
         defaultEngine: () -> ExecutionEngineChoice = { ExecutionEngineChoice.LOCAL },
         engineProvider: ((ExecutionEngineChoice) -> com.rmobile.console.data.execution.ExecutionEngine)? = null,
+        remoteConfigured: () -> Boolean = { true },
     ): EditorViewModel {
         val repo = RExecutionRepository(api)
         return EditorViewModel(
@@ -116,6 +117,7 @@ class EditorViewModelTest {
             defaultEngine = defaultEngine,
             engineProvider = engineProvider
                 ?: { _ -> com.rmobile.console.data.execution.RemoteExecutionEngine(repo) },
+            remoteConfigured = remoteConfigured,
         )
     }
 
@@ -687,6 +689,33 @@ class EditorViewModelTest {
         // The engine's listPackages failed (null), so the null-packages fallback path must have
         // consulted the backend — its package name shows up in the completion set.
         assertTrue(vm.uiState.value.completionSymbols.contains("backend_pkg"))
+    }
+
+    @Test
+    fun `showHelp skips the backend fallback when no backend is configured`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.helpResult = Result.success(com.rmobile.console.data.model.HelpResponse(topic = "aes", found = false))
+        val api = FakeApi()
+        // Would be adopted IF the fallback ran — it must not, so this never reaches the UI.
+        api.helpResponse = com.rmobile.console.data.model.HelpResponse(topic = "aes", text = "From backend", found = true)
+        val vm = viewModel(api = api, engineProvider = { _ -> engine }, remoteConfigured = { false })
+        vm.showHelp("aes")
+        advanceUntilIdle()
+
+        assertEquals(null, api.lastHelp) // no backend configured -> fallback skipped (instant not-found)
+        assertTrue(vm.uiState.value.help is HelpState.NotFound)
+    }
+
+    @Test
+    fun `refreshSymbols skips the backend fallback when no backend is configured`() = runTest {
+        val engine = FakeEngine(ExecuteResponse())
+        engine.symbolsResult = Result.failure(RuntimeException("offline"))
+        val api = FakeApi()
+        api.symbolsResponse = com.rmobile.console.data.model.SymbolsResponse(listOf("backend_sym"))
+        val vm = viewModel(api = api, engineProvider = { _ -> engine }, remoteConfigured = { false })
+        advanceUntilIdle()
+        // Engine symbols failed, but with no backend configured the fallback must be skipped.
+        assertFalse(vm.uiState.value.completionSymbols.contains("backend_sym"))
     }
 
     @Test

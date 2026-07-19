@@ -30,6 +30,13 @@ class SettingsStore(context: Context) : HistoryStore, SavedScriptStore, AppSetti
         get() = prefs.getString(KEY_BASE_URL, null) ?: BuildConfig.R_EXECUTION_BASE_URL
         set(value) = prefs.edit().putString(KEY_BASE_URL, value).apply()
 
+    /** True once the user has saved a backend URL in Settings (i.e. not the build-time
+     *  default). Used to skip the best-effort Remote help/symbols fallback on a Local-only
+     *  device that never configured a backend, so an offline "not found" returns instantly
+     *  instead of waiting for the network to time out. */
+    val hasConfiguredBaseUrl: Boolean
+        get() = prefs.getString(KEY_BASE_URL, null) != null
+
     /** Optional API key sent as `X-API-Key`; blank means "don't send one". */
     override var apiKey: String
         get() = prefs.getString(KEY_API_KEY, null) ?: ""
