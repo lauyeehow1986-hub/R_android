@@ -38,6 +38,10 @@ class EditorViewModel(
     private val defaultEngine: () -> ExecutionEngineChoice = { ServiceLocator.settingsStore.executionEngine },
     private val engineProvider: (ExecutionEngineChoice) -> ExecutionEngine = { ServiceLocator.engineFor(it) },
     private val swapProgress: StateFlow<SwapPhase> = ServiceLocator.swapProgress,
+    // Whether a backend URL has been configured. Gates the best-effort Remote fallback for
+    // help/symbols on Local projects so a Local-only device with no backend returns an offline
+    // "not found" instantly instead of blocking on a network timeout.
+    private val remoteConfigured: () -> Boolean = { ServiceLocator.settingsStore.hasConfiguredBaseUrl },
 ) : ViewModel() {
 
     private val _uiState: MutableStateFlow<EditorUiState>
@@ -356,8 +360,9 @@ class EditorViewModel(
         viewModelScope.launch {
             var syms = engine.symbols(session, libraryKey).getOrNull()?.symbols
             var pkgs = engine.listPackages(session, libraryKey).getOrNull()?.packages
-            // Local-first: if an on-device lookup fails, fall back to the backend when reachable.
-            if (choice == ExecutionEngineChoice.LOCAL) {
+            // Local-first: if an on-device lookup fails, fall back to the backend — but only when
+            // a backend is configured, so a Local-only device doesn't stall on a network timeout.
+            if (choice == ExecutionEngineChoice.LOCAL && remoteConfigured()) {
                 if (syms == null) syms = repository.listSymbols(session).getOrNull()
                 if (pkgs == null) pkgs = repository.listPackages(session).getOrNull()?.packages
             }
@@ -382,12 +387,13 @@ class EditorViewModel(
         _uiState.update { it.copy(help = HelpState.Loading(t)) }
         viewModelScope.launch {
             // Local-first: try the resolved engine (on-device for Local projects). If a Local
-            // lookup errors or finds nothing, fall back to the Remote backend when one is
-            // reachable — a failed fallback degrades to the local not-found (no error banner).
+            // lookup errors or finds nothing, fall back to the Remote backend — but only when a
+            // backend is configured (else a Local-only device would stall on a network timeout
+            // before showing not-found). A failed fallback degrades to the local not-found.
             val primary = engineProvider(choice).help(t, session, libraryKey)
             var resp = primary.getOrNull()
             var failure = primary.exceptionOrNull()
-            if (choice == ExecutionEngineChoice.LOCAL && (resp == null || !resp.found)) {
+            if (choice == ExecutionEngineChoice.LOCAL && remoteConfigured() && (resp == null || !resp.found)) {
                 repository.help(t, session).getOrNull()?.let { fb -> resp = fb; failure = null }
             }
             if (requestId != helpRequestId) return@launch

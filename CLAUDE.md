@@ -104,7 +104,9 @@ Retrofit client, not worth a framework yet):
   project's `ExecutionEngine` — Local resolves them on-device via `bridge.js` `webrHelp`/`webrSymbols`
   (real `tools::Rd2txt` + `getNamespaceExports`, no network), Remote via the backend `/help`/`/symbols`.
   On a Local project a not-found/failed on-device lookup falls back best-effort to the Remote backend
-  when reachable; a failed fallback degrades quietly (help → `NotFound`, not an error banner).
+  — but only when a backend URL has been configured (`SettingsStore.hasConfiguredBaseUrl`), so a
+  Local-only device with no backend returns not-found instantly instead of stalling on a network
+  timeout; a failed fallback degrades quietly (help → `NotFound`, not an error banner).
 - `ui/settings/` — `SettingsScreen` + `SettingsViewModel` for editing the
   backend URL and API key at runtime, with a "Test connection" action backed by
   `NetworkModule.probeHealth` (pings `<url>/health` through a separate client
