@@ -199,14 +199,20 @@ bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
   It can also **import data** — upload files on-device, read them in code by name
   (`read.csv("x.csv")`), and preview them as tables (files stored in the app's
   private storage; up to 1 GB, though large files may exhaust the on-device
-  engine's memory). *v1 limits:* the Local engine's workspace (variables) resets
-  when the app restarts.
+  engine's memory). The Local engine's workspace **and** installed package library
+  both **persist across app restarts** (per-project snapshots in private storage),
+  and the **engine is chosen per project** (the Settings toggle is the default for
+  new projects).
 - Single-screen editor: write R, tap Run, see stdout/stderr and plots.
 - **R syntax highlighting** and a **quick-insert bar** for common operators
   (`<-`, `|>`, `%>%`, `()`, …).
 - **Code assist** — an autocomplete **suggestion strip** (base R + your workspace
   objects + installed-package symbols) and in-app **R help** (`?fn`), reached from
-  a completion chip or a `?` help search, rendered as text in a sheet.
+  a completion chip or a `?` help search, rendered as text in a sheet. On the Local
+  engine both resolve **on-device** (real `tools::Rd2txt` help + package exports), so
+  help and completions work **fully offline**; if a Local lookup finds nothing it
+  falls back to the Remote backend, but only when one is configured (so a Local-only
+  device answers instantly instead of waiting on the network).
 - **Named saved scripts** and **run history**, both persisted — reopen, restore,
   and delete.
 - **In-app Settings** — change the backend URL and API key at runtime, with a
@@ -238,8 +244,30 @@ bash app/src/main/assets/webr/scripts/fetch-webr-packages.sh
 - Distinct handling of execution **timeouts** vs. errors.
 - Backend with optional **API-key auth** and **per-IP rate limiting**.
 
-Not built yet: cross-restart persistence of the local *workspace* (variables),
-per-project engine choice, iOS-app feature parity.
+Not built yet: iOS-app feature parity.
+
+## Architecture
+
+Two independent pieces (see `CLAUDE.md` for the full version and conventions):
+
+- **`app/`** — a single-activity Jetpack Compose client (Kotlin, manual DI). R runs
+  behind one `ExecutionEngine` interface with two implementations: a **Local** engine
+  (bundled WebR — GNU R → WebAssembly, in an offscreen WebView) and a **Remote**
+  engine (the backend). The engine is chosen **per project**. Every R-facing
+  operation — run, reset, data preview, package install/list, **R help**, and the
+  autocomplete **symbol index** — is routed through the active project's engine, so
+  the UI is engine-agnostic and the same features work on-device or over the network.
+  Local operations are **local-first**: an on-device lookup that comes up empty falls
+  back to the Remote backend only when a backend URL is configured.
+- **`backend/`** — a Plumber (R) HTTP service that executes R in isolated subprocesses.
+  It backs the Remote engine (and the best-effort help/symbol fallbacks). This is
+  arbitrary-code-execution-as-a-feature — read `backend/README.md`'s security section
+  before exposing it anywhere reachable.
+
+Both engines return the **same response contract** (stdout/stderr, plots, tables,
+workspace objects), and the on-device WebR harness mirrors the backend's execution
+wrapper, so output is identical across engines. Per-project workspaces and package
+libraries persist across app restarts via snapshots in the app's private storage.
 
 ## Releasing (maintainers)
 
@@ -261,8 +289,8 @@ release APK to a GitHub Release when you push a `v*` tag. One-time setup:
    for each release.
 4. **Tag and push:**
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 
 To build a signed APK **locally** instead, put a gitignored `keystore.properties`
